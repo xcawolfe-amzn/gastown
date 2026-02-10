@@ -207,9 +207,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 	},
 	AgentKiro: {
 		Name:                AgentKiro,
-		Command:             "kiro",
-		Args:                []string{"--trust-all-tools"},
-		ProcessNames:        []string{"kiro", "node"}, // Likely Node.js-based
+		Command:             "kiro-cli",
+		Args:                []string{"chat", "--trust-all-tools"},
+		ProcessNames:        []string{"kiro-cli", "kiro", "node"}, // Likely Node.js-based
 		SessionIDEnv:        "",
 		ResumeFlag:          "--resume",
 		ResumeStyle:         "flag",
