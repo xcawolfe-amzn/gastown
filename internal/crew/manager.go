@@ -9,11 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
@@ -51,6 +54,49 @@ type StartOptions struct {
 
 	// AgentOverride specifies an alternate agent alias (e.g., for testing).
 	AgentOverride string
+
+	// ResumeSessionID resumes a previous agent session instead of starting fresh.
+	// "last" means resume the most recent session (--resume with no session ID).
+	// Any other non-empty value is a specific session ID to resume.
+	ResumeSessionID string
+}
+
+// validateSessionID checks that a resume session ID contains only safe characters.
+// Session IDs from Claude, Gemini, etc. are typically UUIDs or hex strings.
+// This rejects shell metacharacters that could cause injection when the ID is
+// interpolated into a shell command string.
+func validateSessionID(id string) error {
+	if id == "" || id == "last" {
+		return nil
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return fmt.Errorf("invalid session ID %q: contains character %q; session IDs may only contain alphanumeric characters, hyphens, underscores, and dots", id, string(c))
+		}
+	}
+	return nil
+}
+
+// buildResumeArgs validates the agent preset supports resume and returns the
+// flag(s) to append to the command string. agentName is the resolved agent
+// preset name (e.g. "claude", "gemini"). sessionID is "last" for auto-resume
+// or a specific session ID.
+func buildResumeArgs(agentName, sessionID string) (string, error) {
+	preset := config.GetAgentPresetByName(agentName)
+	if preset == nil || preset.ResumeFlag == "" {
+		return "", fmt.Errorf("agent %q does not support session resume", agentName)
+	}
+	if preset.ResumeStyle == "subcommand" {
+		return "", fmt.Errorf("--resume not yet supported for subcommand-style agents (e.g., %s); use the agent's native resume mechanism", agentName)
+	}
+
+	if sessionID == "last" {
+		if preset.ContinueFlag == "" {
+			return "", fmt.Errorf("agent %q does not support --resume without a session ID (no ContinueFlag configured); use --resume <session-id> instead", agentName)
+		}
+		return preset.ContinueFlag, nil
+	}
+	return preset.ResumeFlag + " " + config.ShellQuote(sessionID), nil
 }
 
 // validateCrewName checks that a crew name is safe and valid.
@@ -112,11 +158,38 @@ func (m *Manager) exists(name string) bool {
 	return err == nil
 }
 
+// lockCrew acquires an exclusive file lock for a specific crew worker.
+// This prevents concurrent gt processes from racing on the same crew worker's
+// filesystem operations (Add, Remove, Rename, Start).
+// Caller must defer fl.Unlock().
+func (m *Manager) lockCrew(name string) (*flock.Flock, error) {
+	lockDir := filepath.Join(m.rig.Path, ".runtime", "locks")
+	if err := os.MkdirAll(lockDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating lock dir: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, fmt.Sprintf("crew-%s.lock", name))
+	fl := flock.New(lockPath)
+	if err := fl.Lock(); err != nil {
+		return nil, fmt.Errorf("acquiring crew lock for %s: %w", name, err)
+	}
+	return fl, nil
+}
+
 // Add creates a new crew worker with a clone of the rig.
 func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	if err := validateCrewName(name); err != nil {
 		return nil, err
 	}
+	fl, err := m.lockCrew(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = fl.Unlock() }()
+	return m.addLocked(name, createBranch)
+}
+
+// addLocked creates a new crew worker, assumes caller holds lockCrew(name).
+func (m *Manager) addLocked(name string, createBranch bool) (*CrewWorker, error) {
 	if m.exists(name) {
 		return nil, ErrCrewExists
 	}
@@ -132,7 +205,7 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	// Clone the rig repo
 	if m.rig.LocalRepo != "" {
 		if err := m.git.CloneWithReference(m.rig.GitURL, crewPath, m.rig.LocalRepo); err != nil {
-			fmt.Printf("Warning: could not clone with local repo reference: %v\n", err)
+			style.PrintWarning("could not clone with local repo reference: %v", err)
 			if err := m.git.Clone(m.rig.GitURL, crewPath); err != nil {
 				return nil, fmt.Errorf("cloning rig: %w", err)
 			}
@@ -146,7 +219,7 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	// Sync remotes from mayor/rig so crew clone matches the rig's remote config.
 	// This prevents origin pointing to upstream instead of the fork.
 	if err := m.syncRemotesFromRig(crewPath); err != nil {
-		fmt.Printf("Warning: could not sync remotes from rig: %v\n", err)
+		style.PrintWarning("could not sync remotes from rig: %v", err)
 	}
 
 	crewGit := git.NewGit(crewPath)
@@ -175,7 +248,7 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	// Set up shared beads: crew uses rig's shared beads via redirect file
 	if err := m.setupSharedBeads(crewPath); err != nil {
 		// Non-fatal - crew can still work, warn but don't fail
-		fmt.Printf("Warning: could not set up shared beads: %v\n", err)
+		style.PrintWarning("could not set up shared beads: %v", err)
 	}
 
 	// Provision PRIME.md with Gas Town context for this worker.
@@ -183,20 +256,30 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	// always have GUPP and essential Gas Town context.
 	if err := beads.ProvisionPrimeMDForWorktree(crewPath); err != nil {
 		// Non-fatal - crew can still work via hook, warn but don't fail
-		fmt.Printf("Warning: could not provision PRIME.md: %v\n", err)
+		style.PrintWarning("could not provision PRIME.md: %v", err)
 	}
 
 	// Copy overlay files from .runtime/overlay/ to crew root.
 	// This allows services to have .env and other config files at their root.
 	if err := rig.CopyOverlay(m.rig.Path, crewPath); err != nil {
 		// Non-fatal - log warning but continue
-		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
+		style.PrintWarning("could not copy overlay files: %v", err)
 	}
 
 	// Ensure .gitignore has required Gas Town patterns
 	if err := rig.EnsureGitignorePatterns(crewPath); err != nil {
 		// Non-fatal - log warning but continue
-		fmt.Printf("Warning: could not update .gitignore: %v\n", err)
+		style.PrintWarning("could not update .gitignore: %v", err)
+	}
+
+	// Install runtime settings in the shared crew parent directory.
+	// Settings are passed to Claude Code via --settings flag.
+	addTownRoot := filepath.Dir(m.rig.Path)
+	addRuntimeConfig := config.ResolveRoleAgentConfig("crew", addTownRoot, m.rig.Path)
+	crewSettingsDir := config.RoleSettingsDir("crew", m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(crewSettingsDir, crewPath, "crew", addRuntimeConfig); err != nil {
+		// Non-fatal - log warning but continue
+		style.PrintWarning("could not install runtime settings: %v", err)
 	}
 
 	// NOTE: Slash commands (.claude/commands/) are provisioned at town level by gt install.
@@ -259,12 +342,20 @@ func (m *Manager) syncRemotesFromRig(crewPath string) error {
 		if existErr != nil {
 			// Remote doesn't exist — add it
 			if _, addErr := crewGit.AddRemote(remote, url); addErr != nil {
-				fmt.Printf("Warning: could not add remote %s: %v\n", remote, addErr)
+				style.PrintWarning("could not add remote %s: %v", remote, addErr)
 			}
 		} else if existingURL != url {
 			// Remote exists but URL differs — update it
 			if _, setErr := crewGit.SetRemoteURL(remote, url); setErr != nil {
-				fmt.Printf("Warning: could not update remote %s: %v\n", remote, setErr)
+				style.PrintWarning("could not update remote %s: %v", remote, setErr)
+			}
+		}
+
+		// Sync push URL if configured (for read-only upstream forks)
+		pushURL, pushErr := rigGit.GetPushURL(remote)
+		if pushErr == nil && pushURL != "" && pushURL != url {
+			if cfgErr := crewGit.ConfigurePushURL(remote, pushURL); cfgErr != nil {
+				fmt.Printf("Warning: could not sync push URL for %s: %v\n", remote, cfgErr)
 			}
 		}
 	}
@@ -277,6 +368,11 @@ func (m *Manager) Remove(name string, force bool) error {
 	if err := validateCrewName(name); err != nil {
 		return err
 	}
+	fl, err := m.lockCrew(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl.Unlock() }()
 	if !m.exists(name) {
 		return ErrCrewNotFound
 	}
@@ -332,6 +428,16 @@ func (m *Manager) Get(name string) (*CrewWorker, error) {
 	if err := validateCrewName(name); err != nil {
 		return nil, err
 	}
+	fl, err := m.lockCrew(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = fl.Unlock() }()
+	return m.getLocked(name)
+}
+
+// getLocked returns a crew worker, assumes caller holds lockCrew(name).
+func (m *Manager) getLocked(name string) (*CrewWorker, error) {
 	if !m.exists(name) {
 		return nil, ErrCrewNotFound
 	}
@@ -389,6 +495,21 @@ func (m *Manager) Rename(oldName, newName string) error {
 	if err := validateCrewName(newName); err != nil {
 		return err
 	}
+	// Lock both names in alphabetical order to prevent deadlock.
+	first, second := oldName, newName
+	if first > second {
+		first, second = second, first
+	}
+	fl1, err := m.lockCrew(first)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl1.Unlock() }()
+	fl2, err := m.lockCrew(second)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl2.Unlock() }()
 	if !m.exists(oldName) {
 		return ErrCrewNotFound
 	}
@@ -481,7 +602,7 @@ func (m *Manager) setupSharedBeads(crewPath string) error {
 
 // SessionName returns the tmux session name for a crew member.
 func (m *Manager) SessionName(name string) string {
-	return fmt.Sprintf("gt-%s-crew-%s", m.rig.Name, name)
+	return session.CrewSessionName(session.PrefixFor(m.rig.Name), name)
 }
 
 // Start creates and starts a tmux session for a crew member.
@@ -491,10 +612,17 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		return err
 	}
 
-	// Get or create the crew worker
-	worker, err := m.Get(name)
+	// Acquire lock to prevent concurrent Start/Remove races.
+	fl, err := m.lockCrew(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	// Get or create the crew worker (using locked variants to avoid lock re-entry)
+	worker, err := m.getLocked(name)
 	if err == ErrCrewNotFound {
-		worker, err = m.Add(name, false) // No feature branch for crew
+		worker, err = m.addLocked(name, false) // No feature branch for crew
 		if err != nil {
 			return fmt.Errorf("creating crew workspace: %w", err)
 		}
@@ -502,17 +630,97 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		return fmt.Errorf("getting crew worker: %w", err)
 	}
 
+	// Ensure runtime settings exist in the shared crew parent directory.
+	// Settings are passed to Claude Code via --settings flag.
+	townRoot := filepath.Dir(m.rig.Path)
+	runtimeConfig := config.ResolveRoleAgentConfig("crew", townRoot, m.rig.Path)
+	crewSettingsDir := config.RoleSettingsDir("crew", m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(crewSettingsDir, worker.ClonePath, "crew", runtimeConfig); err != nil {
+		return fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+
+	// Compute environment variables BEFORE creating the session.
+	// These are passed via tmux -e flags so the initial shell inherits the correct
+	// env from the start, preventing parent env (e.g., GT_ROLE=mayor) from leaking
+	// into crew sessions. See: https://github.com/steveyegge/gastown/issues/1289
+	envVars := config.AgentEnv(config.AgentEnvConfig{
+		Role:             "crew",
+		Rig:              m.rig.Name,
+		AgentName:        name,
+		TownRoot:         townRoot,
+		RuntimeConfigDir: opts.ClaudeConfigDir,
+		Agent:            opts.AgentOverride,
+	})
+
+	// Build startup command (also includes env vars via 'exec env' for
+	// WaitForCommand detection — belt and suspenders with -e flags)
+	// SessionStart hook handles context loading (gt prime --hook)
+	//
+	// IMPORTANT: All validation and command building happens BEFORE killing
+	// any existing session, so a validation failure cannot leave the user
+	// without a running session.
+	var claudeCmd string
+	if opts.ResumeSessionID != "" {
+		// Validate session ID to prevent shell injection. The ID is interpolated
+		// into a shell command string, so reject anything with metacharacters.
+		if err := validateSessionID(opts.ResumeSessionID); err != nil {
+			return err
+		}
+
+		// Resume mode: build command without prompt, then append resume flag.
+		// No beacon is passed as prompt - the resumed session already has context.
+		// The SessionStart hook still fires and injects Gas Town metadata.
+		claudeCmd, err = config.BuildCrewStartupCommandWithAgentOverride(m.rig.Name, name, m.rig.Path, "", opts.AgentOverride)
+		if err != nil {
+			return fmt.Errorf("building resume command: %w", err)
+		}
+
+		// Determine agent preset for resume flag.
+		// Try rig-level agent config first, fall back to "claude".
+		agentName := opts.AgentOverride
+		if agentName == "" {
+			if rc := config.ResolveRoleAgentConfig("crew", townRoot, m.rig.Path); rc != nil && rc.Provider != "" {
+				agentName = rc.Provider
+			} else {
+				agentName = "claude"
+			}
+		}
+		resumeArgs, err := buildResumeArgs(agentName, opts.ResumeSessionID)
+		if err != nil {
+			return err
+		}
+		claudeCmd += " " + resumeArgs
+	} else {
+		// Normal start: build beacon for predecessor discovery via /resume.
+		// Only used in fresh-start mode — resumed sessions already have context.
+		address := session.BeaconRecipient("crew", name, m.rig.Name)
+		topic := opts.Topic
+		if topic == "" {
+			topic = "start"
+		}
+		beacon := session.FormatStartupBeacon(session.BeaconConfig{
+			Recipient: address,
+			Sender:    "human",
+			Topic:     topic,
+		})
+		claudeCmd, err = config.BuildCrewStartupCommandWithAgentOverride(m.rig.Name, name, m.rig.Path, beacon, opts.AgentOverride)
+		if err != nil {
+			return fmt.Errorf("building startup command: %w", err)
+		}
+	}
+
 	t := tmux.NewTmux()
 	sessionID := m.SessionName(name)
 
-	// Check if session already exists
+	// Check if session already exists — kill AFTER command is fully built
+	// so validation failures don't destroy the user's running session.
 	running, err := t.HasSession(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
 	}
 	if running {
 		if opts.KillExisting {
-			// Restart mode - kill existing session.
+			// Restart/resume mode - kill existing session.
 			// Use KillSessionWithProcesses to ensure all descendant processes are killed.
 			if err := t.KillSessionWithProcesses(sessionID); err != nil {
 				return fmt.Errorf("killing existing session: %w", err)
@@ -530,66 +738,18 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 	}
 
-	// Ensure runtime settings exist in crew/ (not crew/<name>/) so we don't
-	// write into the source repo. Claude walks up the tree to find settings.
-	// All crew members share the same settings file.
-	crewBaseDir := filepath.Join(m.rig.Path, "crew")
-	townRoot := filepath.Dir(m.rig.Path)
-	runtimeConfig := config.ResolveRoleAgentConfig("crew", townRoot, m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(crewBaseDir, "crew", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
-	}
-
-	// Build the startup beacon for predecessor discovery via /resume
-	// Pass it as Claude's initial prompt - processed when Claude is ready
-	address := fmt.Sprintf("%s/crew/%s", m.rig.Name, name)
-	topic := opts.Topic
-	if topic == "" {
-		topic = "start"
-	}
-	beacon := session.FormatStartupBeacon(session.BeaconConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     topic,
-	})
-
-	// Build startup command first
-	// SessionStart hook handles context loading (gt prime --hook)
-	claudeCmd, err := config.BuildCrewStartupCommandWithAgentOverride(m.rig.Name, name, m.rig.Path, beacon, opts.AgentOverride)
-	if err != nil {
-		return fmt.Errorf("building startup command: %w", err)
-	}
-
 	// For interactive/refresh mode, remove --dangerously-skip-permissions
 	if opts.Interactive {
 		claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
 	}
 
-	// Create session with command directly to avoid send-keys race condition.
-	// See: https://github.com/anthropics/gastown/issues/280
-	if err := t.NewSessionWithCommand(sessionID, worker.ClonePath, claudeCmd); err != nil {
+	// Create session with command and env vars via -e flags.
+	// The -e flags set session-level env BEFORE the shell starts, ensuring the
+	// initial shell inherits the correct GT_ROLE (not the parent's).
+	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
+	// See: https://github.com/steveyegge/gastown/issues/1289 (env inheritance fix)
+	if err := t.NewSessionWithCommandAndEnv(sessionID, worker.ClonePath, claudeCmd, envVars); err != nil {
 		return fmt.Errorf("creating session: %w", err)
-	}
-
-	// Set environment variables (non-fatal: session works without these)
-	// Use centralized AgentEnv for consistency across all role startup paths
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:             "crew",
-		Rig:              m.rig.Name,
-		AgentName:        name,
-		TownRoot:         townRoot,
-		RuntimeConfigDir: opts.ClaudeConfigDir,
-		BeadsNoDaemon:    true,
-	})
-	for k, v := range envVars {
-		_ = t.SetEnvironment(sessionID, k, v)
-	}
-
-	// Persist agent override in tmux session env so handoff can read it back.
-	// The startup command sets GT_AGENT via exec env, but that only lives in the
-	// process tree. The tmux session env survives respawn-pane and is queryable.
-	if opts.AgentOverride != "" {
-		_ = t.SetEnvironment(sessionID, "GT_AGENT", opts.AgentOverride)
 	}
 
 	// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
@@ -598,6 +758,9 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 
 	// Set up C-b n/p keybindings for crew session cycling (non-fatal)
 	_ = t.SetCrewCycleBindings(sessionID)
+
+	// Track PID for defense-in-depth orphan cleanup (non-fatal)
+	_ = session.TrackSessionPID(townRoot, sessionID, t)
 
 	// Note: We intentionally don't wait for the agent to start here.
 	// The session is created in detached mode, and blocking for 60 seconds
@@ -641,4 +804,3 @@ func (m *Manager) IsRunning(name string) (bool, error) {
 	sessionID := m.SessionName(name)
 	return t.HasSession(sessionID)
 }
-

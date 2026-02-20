@@ -32,9 +32,12 @@ type AgentEnvConfig struct {
 	// Sets GT_SESSION_ID_ENV so the runtime knows where to find the session ID.
 	SessionIDEnv string
 
-	// BeadsNoDaemon sets BEADS_NO_DAEMON=1 if true
-	// Used for polecats that should bypass the beads daemon
-	BeadsNoDaemon bool
+	// Agent is the agent override (e.g., "codex", "gemini").
+	// If set, GT_AGENT is written to the tmux session table via SetEnvironment
+	// so that IsAgentAlive and waitForPolecatReady can read it via GetEnvironment.
+	// Without this, GetEnvironment returns empty (tmux show-environment reads the
+	// session table, not the process env set via exec env in the startup command).
+	Agent string
 }
 
 // AgentEnv returns all environment variables for an agent based on the config.
@@ -108,10 +111,6 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		env["BEADS_AGENT_NAME"] = fmt.Sprintf("%s/%s", cfg.Rig, cfg.AgentName)
 	}
 
-	if cfg.BeadsNoDaemon {
-		env["BEADS_NO_DAEMON"] = "1"
-	}
-
 	// Add optional runtime config directory
 	if cfg.RuntimeConfigDir != "" {
 		env["CLAUDE_CONFIG_DIR"] = cfg.RuntimeConfigDir
@@ -121,6 +120,30 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	if cfg.SessionIDEnv != "" {
 		env["GT_SESSION_ID_ENV"] = cfg.SessionIDEnv
 	}
+
+	// Set GT_AGENT when an agent override is in use.
+	// This makes the override visible via tmux show-environment so that
+	// IsAgentAlive and waitForPolecatReady use the correct process names.
+	if cfg.Agent != "" {
+		env["GT_AGENT"] = cfg.Agent
+	}
+
+	// Clear NODE_OPTIONS to prevent debugger flags (e.g., --inspect from VSCode)
+	// from being inherited through tmux into Claude's Node.js runtime.
+	// This is the PRIMARY guard: setting it here (the single source of truth
+	// for agent env) protects all AgentEnv-based paths automatically — tmux
+	// SetEnvironment, EnvForExecCommand, PrependEnv. SanitizeAgentEnv provides
+	// a SUPPLEMENTAL guard for non-AgentEnv paths (lifecycle default, handoff).
+	// In BuildStartupCommand, rc.Env is merged after AgentEnv and can override
+	// this empty value with intentional settings like --max-old-space-size.
+	env["NODE_OPTIONS"] = ""
+
+	// Clear CLAUDECODE to prevent nested session detection in Claude Code v2.x.
+	// When gt sling is invoked from within a Claude Code session, CLAUDECODE=1
+	// leaks through tmux's global environment into new polecat sessions, causing
+	// Claude Code to refuse to start with a "nested sessions" error.
+	// See: https://github.com/steveyegge/gastown/issues/1666
+	env["CLAUDECODE"] = ""
 
 	return env
 }
@@ -137,7 +160,7 @@ func AgentEnvSimple(role, rig, agentName string) map[string]string {
 
 // ShellQuote returns a shell-safe quoted string.
 // Values containing special characters are wrapped in single quotes.
-// Single quotes within the value are escaped using the '\'' idiom.
+// Single quotes within the value are escaped using the '\” idiom.
 func ShellQuote(s string) string {
 	// Check if quoting is needed (contains shell special chars)
 	needsQuoting := false

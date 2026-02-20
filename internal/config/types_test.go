@@ -100,6 +100,14 @@ func TestDefaultWorkerStatusConfig(t *testing.T) {
 	if stale >= stuck {
 		t.Errorf("StaleThreshold (%v) must be < StuckThreshold (%v)", stale, stuck)
 	}
+	hbFresh := ParseDurationOrDefault(cfg.HeartbeatFreshThreshold, 0)
+	if hbFresh != 5*time.Minute {
+		t.Errorf("HeartbeatFreshThreshold = %v, want 5m", hbFresh)
+	}
+	mayorActive := ParseDurationOrDefault(cfg.MayorActiveThreshold, 0)
+	if mayorActive != 5*time.Minute {
+		t.Errorf("MayorActiveThreshold = %v, want 5m", mayorActive)
+	}
 }
 
 func TestDefaultFeedCuratorConfig(t *testing.T) {
@@ -154,8 +162,10 @@ func TestWebTimeoutsConfig_JSONRoundTrip(t *testing.T) {
 func TestWorkerStatusConfig_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
 	original := &WorkerStatusConfig{
-		StaleThreshold: "10m",
-		StuckThreshold: "1h",
+		StaleThreshold:          "10m",
+		StuckThreshold:          "1h",
+		HeartbeatFreshThreshold: "3m",
+		MayorActiveThreshold:    "8m",
 	}
 
 	data, err := json.Marshal(original)
@@ -197,6 +207,68 @@ func TestFeedCuratorConfig_JSONRoundTrip(t *testing.T) {
 }
 
 // --- TownSettings with/without new config fields ---
+
+// --- Gemini provider defaults ---
+
+func TestGeminiProviderDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaultRuntimeCommand", func(t *testing.T) {
+		cmd := defaultRuntimeCommand("gemini")
+		if cmd != "gemini" {
+			t.Errorf("defaultRuntimeCommand(gemini) = %q, want %q", cmd, "gemini")
+		}
+	})
+
+	t.Run("defaultSessionIDEnv", func(t *testing.T) {
+		env := defaultSessionIDEnv("gemini")
+		if env != "GEMINI_SESSION_ID" {
+			t.Errorf("defaultSessionIDEnv(gemini) = %q, want %q", env, "GEMINI_SESSION_ID")
+		}
+	})
+
+	t.Run("defaultHooksProvider", func(t *testing.T) {
+		provider := defaultHooksProvider("gemini")
+		if provider != "gemini" {
+			t.Errorf("defaultHooksProvider(gemini) = %q, want %q", provider, "gemini")
+		}
+	})
+
+	t.Run("defaultHooksDir", func(t *testing.T) {
+		dir := defaultHooksDir("gemini")
+		if dir != ".gemini" {
+			t.Errorf("defaultHooksDir(gemini) = %q, want %q", dir, ".gemini")
+		}
+	})
+
+	t.Run("defaultHooksFile", func(t *testing.T) {
+		file := defaultHooksFile("gemini")
+		if file != "settings.json" {
+			t.Errorf("defaultHooksFile(gemini) = %q, want %q", file, "settings.json")
+		}
+	})
+
+	t.Run("defaultProcessNames", func(t *testing.T) {
+		names := defaultProcessNames("gemini", "gemini")
+		if len(names) != 1 || names[0] != "gemini" {
+			t.Errorf("defaultProcessNames(gemini) = %v, want [gemini]", names)
+		}
+	})
+
+	t.Run("defaultReadyDelayMs", func(t *testing.T) {
+		delay := defaultReadyDelayMs("gemini")
+		if delay != 5000 {
+			t.Errorf("defaultReadyDelayMs(gemini) = %d, want 5000", delay)
+		}
+	})
+
+	t.Run("defaultInstructionsFile", func(t *testing.T) {
+		file := defaultInstructionsFile("gemini")
+		if file != "AGENTS.md" {
+			t.Errorf("defaultInstructionsFile(gemini) = %q, want %q", file, "AGENTS.md")
+		}
+	})
+}
 
 func TestTownSettings_WithoutNewFields_LoadsDefaults(t *testing.T) {
 	t.Parallel()
@@ -256,8 +328,10 @@ func TestTownSettings_WithNewFields_RoundTrip(t *testing.T) {
 		MaxRunTimeout:     "2m",
 	}
 	original.WorkerStatus = &WorkerStatusConfig{
-		StaleThreshold: "10m",
-		StuckThreshold: "1h",
+		StaleThreshold:          "10m",
+		StuckThreshold:          "1h",
+		HeartbeatFreshThreshold: "3m",
+		MayorActiveThreshold:    "8m",
 	}
 	original.FeedCurator = &FeedCuratorConfig{
 		DoneDedupeWindow:     "20s",
@@ -306,6 +380,12 @@ func TestTownSettings_WithNewFields_RoundTrip(t *testing.T) {
 	}
 	if loaded.WorkerStatus.StuckThreshold != "1h" {
 		t.Errorf("StuckThreshold = %q, want %q", loaded.WorkerStatus.StuckThreshold, "1h")
+	}
+	if loaded.WorkerStatus.HeartbeatFreshThreshold != "3m" {
+		t.Errorf("HeartbeatFreshThreshold = %q, want %q", loaded.WorkerStatus.HeartbeatFreshThreshold, "3m")
+	}
+	if loaded.WorkerStatus.MayorActiveThreshold != "8m" {
+		t.Errorf("MayorActiveThreshold = %q, want %q", loaded.WorkerStatus.MayorActiveThreshold, "8m")
 	}
 
 	// Verify FeedCurator
@@ -500,4 +580,5 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		})
 	}
 }
+
 

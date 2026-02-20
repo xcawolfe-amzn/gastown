@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -51,7 +53,7 @@ func (m *Manager) SetOutput(w io.Writer) {
 
 // SessionName returns the tmux session name for this refinery.
 func (m *Manager) SessionName() string {
-	return fmt.Sprintf("gt-%s-refinery", m.rig.Name)
+	return session.RefinerySessionName(session.PrefixFor(m.rig.Name))
 }
 
 // IsRunning checks if the refinery session is active.
@@ -119,20 +121,25 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
 	}
 
-	// Ensure runtime settings exist in refinery/ (not refinery/rig/) so we don't
-	// write into the source repo. Runtime walks up the tree to find settings.
-	refineryParentDir := filepath.Join(m.rig.Path, "refinery")
+	// Ensure runtime settings exist in the shared refinery parent directory.
+	// Settings are passed to Claude Code via --settings flag.
 	townRoot := filepath.Dir(m.rig.Path)
 	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(refineryParentDir, "refinery", runtimeConfig); err != nil {
+	refinerySettingsDir := config.RoleSettingsDir("refinery", m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(refinerySettingsDir, refineryRigDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
+	// Ensure .gitignore has required Gas Town patterns
+	if err := rig.EnsureGitignorePatterns(refineryRigDir); err != nil {
+		style.PrintWarning("could not update refinery .gitignore: %v", err)
+	}
+
 	initialPrompt := session.BuildStartupPrompt(session.BeaconConfig{
-		Recipient: fmt.Sprintf("%s/refinery", m.rig.Name),
+		Recipient: session.BeaconRecipient("refinery", "", m.rig.Name),
 		Sender:    "deacon",
 		Topic:     "patrol",
-	}, "Check your hook and begin patrol.")
+	}, "Run `gt prime --hook` and begin patrol.")
 
 	var command string
 	if agentOverride != "" {
@@ -154,10 +161,10 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	// Set environment variables (non-fatal: session works without these)
 	// Use centralized AgentEnv for consistency across all role startup paths
 	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:          "refinery",
-		Rig:           m.rig.Name,
-		TownRoot:      townRoot,
-		BeadsNoDaemon: true,
+		Role:     "refinery",
+		Rig:      m.rig.Name,
+		TownRoot: townRoot,
+		Agent:    agentOverride,
 	})
 
 	// Add refinery-specific flag
@@ -211,11 +218,11 @@ func (m *Manager) Stop() error {
 // Uses beads merge-request issues as the source of truth (not git branches).
 // ZFC-compliant: beads is the source of truth, no state file.
 func (m *Manager) Queue() ([]QueueItem, error) {
-	// Query beads for open merge-request type issues
+	// Query beads for open merge-request issues
 	// BeadsPath() returns the git-synced beads location
 	b := beads.New(m.rig.BeadsPath())
 	issues, err := b.List(beads.ListOptions{
-		Type:     "merge-request",
+		Label:    "gt:merge-request",
 		Status:   "open",
 		Priority: -1, // No priority filter
 	})
@@ -231,6 +238,10 @@ func (m *Manager) Queue() ([]QueueItem, error) {
 	}
 	scored := make([]scoredIssue, 0, len(issues))
 	for _, issue := range issues {
+		// Defensive filter: bd status filters can drift; queue must only include open MRs.
+		if issue == nil || issue.Status != "open" {
+			continue
+		}
 		score := m.calculateIssueScore(issue, now)
 		scored = append(scored, scoredIssue{issue: issue, score: score})
 	}
@@ -463,7 +474,9 @@ Please review the feedback and address the issues before resubmitting.`,
 			mr.Branch, mr.IssueID, reason),
 		Priority: mail.PriorityNormal,
 	}
-	_ = router.Send(msg) // best-effort notification
+	if err := router.Send(msg); err != nil {
+		log.Printf("warning: notifying worker of rejection for %s: %v", mr.IssueID, err)
+	}
 }
 
 // findTownRoot walks up directories to find the town root.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -116,12 +117,20 @@ func runMailClaim(cmd *cobra.Command, args []string) error {
 		}
 
 		if info.ClaimedBy == caller {
+			// Delivery ack runs after claim verification so only the
+			// winning claimant writes ack labels. Non-fatal: the claim
+			// itself already succeeded.
+			if ackErr := mail.AcknowledgeDeliveryBead(townRoot, beadsDir, candidate.ID, mail.AddressToIdentity(caller)); ackErr != nil {
+				fmt.Fprintf(os.Stderr, "gt mail claim: delivery ack failed for %s: %v\n", candidate.ID, ackErr)
+			}
 			claimed = candidate
 			break
 		}
 
 		// Another worker claimed it first — remove our stale labels and try next
-		_ = releaseQueueMessage(beadsDir, candidate.ID, caller)
+		if releaseErr := releaseQueueMessage(beadsDir, candidate.ID, caller); releaseErr != nil {
+			style.PrintWarning("could not release stale claim on %s: %v", candidate.ID, releaseErr)
+		}
 	}
 
 	if claimed == nil {
@@ -168,7 +177,7 @@ func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, err
 	args := []string{"list",
 		"--label", "queue:" + queueName,
 		"--status", "open",
-		"--type", "message",
+		"--label", "gt:message",
 		"--json",
 		"--limit", "0",
 	}
@@ -230,7 +239,6 @@ func listUnclaimedQueueMessages(beadsDir, queueName string) ([]queueMessage, err
 				}
 			}
 		}
-
 		// Only include unclaimed messages - check both ClaimedBy and ClaimedAt
 		// to handle orphaned claimed-at labels from interrupted releases
 		if msg.ClaimedBy == "" && msg.ClaimedAt == nil {
@@ -355,10 +363,10 @@ func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) 
 
 	// Parse JSON output - bd show --json returns an array
 	var issues []struct {
-		ID       string   `json:"id"`
-		Title    string   `json:"title"`
-		Labels   []string `json:"labels"`
-		Status   string   `json:"status"`
+		ID     string   `json:"id"`
+		Title  string   `json:"title"`
+		Labels []string `json:"labels"`
+		Status string   `json:"status"`
 	}
 
 	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
@@ -389,7 +397,6 @@ func getQueueMessageInfo(beadsDir, messageID string) (*queueMessageInfo, error) 
 			}
 		}
 	}
-
 	return info, nil
 }
 

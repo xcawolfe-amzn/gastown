@@ -29,6 +29,10 @@ const (
 	AgentAmp AgentPreset = "amp"
 	// AgentOpenCode is OpenCode multi-model CLI.
 	AgentOpenCode AgentPreset = "opencode"
+	// AgentCopilot is GitHub Copilot CLI.
+	AgentCopilot AgentPreset = "copilot"
+	// AgentPi is Pi Coding Agent (extension-based lifecycle).
+	AgentPi AgentPreset = "pi"
 	// AgentKiro is Kiro CLI.
 	AgentKiro AgentPreset = "kiro"
 )
@@ -203,6 +207,48 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		NonInteractive: &NonInteractiveConfig{
 			Subcommand: "run",
 			OutputFlag: "--format json",
+		},
+	},
+	AgentCopilot: {
+		Name:                AgentCopilot,
+		Command:             "copilot",
+		Args:                []string{"--yolo"},
+		ProcessNames:        []string{"copilot"}, // Copilot CLI binary (Node.js but reports as "copilot")
+		SessionIDEnv:        "",                   // Session IDs stored on disk, not in env
+		ResumeFlag:          "--resume",
+		ResumeStyle:         "flag",
+		SupportsHooks:       false, // Copilot instructions file is not executable hooks
+		SupportsForkSession: false,
+		NonInteractive: &NonInteractiveConfig{
+			PromptFlag: "-p",
+		},
+		// Runtime defaults
+		PromptMode:         "arg",
+		ConfigDir:          ".copilot",
+		HooksProvider:      "copilot",
+		HooksDir:           ".copilot",
+		HooksSettingsFile:  "copilot-instructions.md",
+		HooksInformational: true,
+		ReadyPromptPrefix:  "❯ ",
+		ReadyDelayMs:       5000,
+		InstructionsFile:   "AGENTS.md",
+	},
+	AgentPi: {
+		Name:                AgentPi,
+		Command:             "pi",
+		Args:                []string{}, // Extension loaded via -e flag in town settings
+		ProcessNames:        []string{"pi", "node", "bun"}, // Pi runs as Node.js
+		SessionIDEnv:        "PI_SESSION_ID",
+		ResumeFlag:          "",    // No resume support yet
+		ResumeStyle:         "",
+		SupportsHooks:       true,  // Uses .pi/extensions/gastown-hooks.js
+		HooksProvider:       "pi",
+		HooksDir:            ".pi/extensions",
+		HooksSettingsFile:   "gastown-hooks.js",
+		SupportsForkSession: false,
+		NonInteractive: &NonInteractiveConfig{
+			PromptFlag: "-p",
+			OutputFlag: "--no-session",
 		},
 	},
 	AgentKiro: {

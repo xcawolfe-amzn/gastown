@@ -195,9 +195,6 @@ func TestRigSettingsRoundTrip(t *testing.T) {
 	if !loaded.MergeQueue.Enabled {
 		t.Error("MergeQueue.Enabled = false, want true")
 	}
-	if loaded.MergeQueue.TargetBranch != "main" {
-		t.Errorf("MergeQueue.TargetBranch = %q, want 'main'", loaded.MergeQueue.TargetBranch)
-	}
 }
 
 func TestRigSettingsWithCustomMergeQueue(t *testing.T) {
@@ -210,12 +207,12 @@ func TestRigSettingsWithCustomMergeQueue(t *testing.T) {
 		Version: 1,
 		MergeQueue: &MergeQueueConfig{
 			Enabled:              true,
-			TargetBranch:         "develop",
-			IntegrationBranches:  false,
+			IntegrationBranchPolecatEnabled:  boolPtr(false),
+			IntegrationBranchRefineryEnabled: boolPtr(false),
 			OnConflict:           OnConflictAutoRebase,
-			RunTests:             true,
+			RunTests:             boolPtr(true),
 			TestCommand:          "make test",
-			DeleteMergedBranches: false,
+			DeleteMergedBranches: boolPtr(false),
 			RetryFlakyTests:      3,
 			PollInterval:         "1m",
 			MaxConcurrent:        2,
@@ -232,9 +229,6 @@ func TestRigSettingsWithCustomMergeQueue(t *testing.T) {
 	}
 
 	mq := loaded.MergeQueue
-	if mq.TargetBranch != "develop" {
-		t.Errorf("TargetBranch = %q, want 'develop'", mq.TargetBranch)
-	}
 	if mq.OnConflict != OnConflictAutoRebase {
 		t.Errorf("OnConflict = %q, want %q", mq.OnConflict, OnConflictAutoRebase)
 	}
@@ -345,6 +339,39 @@ func TestRigSettingsValidation(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "invalid stale_claim_timeout",
+			settings: &RigSettings{
+				Type:    "rig-settings",
+				Version: 1,
+				MergeQueue: &MergeQueueConfig{
+					StaleClaimTimeout: "not-a-duration",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero stale_claim_timeout",
+			settings: &RigSettings{
+				Type:    "rig-settings",
+				Version: 1,
+				MergeQueue: &MergeQueueConfig{
+					StaleClaimTimeout: "0s",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative stale_claim_timeout",
+			settings: &RigSettings{
+				Type:    "rig-settings",
+				Version: 1,
+				MergeQueue: &MergeQueueConfig{
+					StaleClaimTimeout: "-5m",
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -364,23 +391,23 @@ func TestDefaultMergeQueueConfig(t *testing.T) {
 	if !cfg.Enabled {
 		t.Error("Enabled should be true by default")
 	}
-	if cfg.TargetBranch != "main" {
-		t.Errorf("TargetBranch = %q, want 'main'", cfg.TargetBranch)
+	if !cfg.IsPolecatIntegrationEnabled() {
+		t.Error("IsPolecatIntegrationEnabled should be true by default")
 	}
-	if !cfg.IntegrationBranches {
-		t.Error("IntegrationBranches should be true by default")
+	if !cfg.IsRefineryIntegrationEnabled() {
+		t.Error("IsRefineryIntegrationEnabled should be true by default")
 	}
 	if cfg.OnConflict != OnConflictAssignBack {
 		t.Errorf("OnConflict = %q, want %q", cfg.OnConflict, OnConflictAssignBack)
 	}
-	if !cfg.RunTests {
-		t.Error("RunTests should be true by default")
+	if !cfg.IsRunTestsEnabled() {
+		t.Error("IsRunTestsEnabled should be true by default")
 	}
 	if cfg.TestCommand != "go test ./..." {
 		t.Errorf("TestCommand = %q, want 'go test ./...'", cfg.TestCommand)
 	}
-	if !cfg.DeleteMergedBranches {
-		t.Error("DeleteMergedBranches should be true by default")
+	if !cfg.IsDeleteMergedBranchesEnabled() {
+		t.Error("IsDeleteMergedBranchesEnabled should be true by default")
 	}
 	if cfg.RetryFlakyTests != 1 {
 		t.Errorf("RetryFlakyTests = %d, want 1", cfg.RetryFlakyTests)
@@ -390,6 +417,9 @@ func TestDefaultMergeQueueConfig(t *testing.T) {
 	}
 	if cfg.MaxConcurrent != 1 {
 		t.Errorf("MaxConcurrent = %d, want 1", cfg.MaxConcurrent)
+	}
+	if cfg.StaleClaimTimeout != "30m" {
+		t.Errorf("StaleClaimTimeout = %q, want '30m'", cfg.StaleClaimTimeout)
 	}
 }
 
@@ -1510,8 +1540,9 @@ func TestResolveRoleAgentConfigFromRigSettings(t *testing.T) {
 
 	settings := NewRigSettings()
 	settings.Runtime = &RuntimeConfig{
-		Command: "aider",
-		Args:    []string{"--no-git", "--model", "claude-3"},
+		Command:  "aider",
+		Provider: "aider",
+		Args:     []string{"--no-git", "--model", "claude-3"},
 	}
 	if err := SaveRigSettings(filepath.Join(settingsDir, "config.json"), settings); err != nil {
 		t.Fatalf("saving settings: %v", err)
@@ -1538,6 +1569,88 @@ func TestResolveRoleAgentConfigFallsBackToDefaults(t *testing.T) {
 	rc := ResolveRoleAgentConfig("polecat", "/nonexistent/town", "/nonexistent/rig")
 	if !isClaudeCommand(rc.Command) {
 		t.Errorf("Command = %q, want claude or path ending in /claude (default)", rc.Command)
+	}
+}
+
+func TestIsClaudeAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		rc       *RuntimeConfig
+		expected bool
+	}{
+		{"empty provider and command (defaults)", &RuntimeConfig{}, true},
+		{"explicit claude provider", &RuntimeConfig{Provider: "claude", Command: "anything"}, true},
+		{"explicit codex provider", &RuntimeConfig{Provider: "codex", Command: "claude"}, false},
+		{"bare claude command", &RuntimeConfig{Command: "claude"}, true},
+		{"path to claude binary", &RuntimeConfig{Command: "/usr/local/bin/claude"}, true},
+		{"aider command no provider", &RuntimeConfig{Command: "aider"}, false},
+		{"generic provider", &RuntimeConfig{Provider: "generic"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isClaudeAgent(tt.rc); got != tt.expected {
+				t.Errorf("isClaudeAgent(%+v) = %v, want %v", tt.rc, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestWithRoleSettingsFlag_SkipsNonClaude(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "myrig")
+	settingsDir := filepath.Join(rigPath, "settings")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		t.Fatalf("creating settings dir: %v", err)
+	}
+
+	// Configure aider (non-Claude agent) for polecat role
+	settings := NewRigSettings()
+	settings.Runtime = &RuntimeConfig{
+		Command: "aider",
+		Args:    []string{"--no-git", "--model", "claude-3"},
+	}
+	if err := SaveRigSettings(filepath.Join(settingsDir, "config.json"), settings); err != nil {
+		t.Fatalf("saving settings: %v", err)
+	}
+
+	rc := ResolveRoleAgentConfig("polecat", townRoot, rigPath)
+	// Should NOT contain --settings since aider is not a Claude agent
+	for _, arg := range rc.Args {
+		if arg == "--settings" {
+			t.Errorf("non-Claude agent 'aider' should not get --settings flag, but Args = %v", rc.Args)
+			break
+		}
+	}
+}
+
+func TestWithRoleSettingsFlag_InjectsForClaude(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "myrig")
+	settingsDir := filepath.Join(rigPath, "settings")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		t.Fatalf("creating settings dir: %v", err)
+	}
+
+	// Default config (Claude agent) for polecat role
+	settings := NewRigSettings()
+	if err := SaveRigSettings(filepath.Join(settingsDir, "config.json"), settings); err != nil {
+		t.Fatalf("saving settings: %v", err)
+	}
+
+	rc := ResolveRoleAgentConfig("polecat", townRoot, rigPath)
+	// Should contain --settings since default agent is Claude
+	found := false
+	for _, arg := range rc.Args {
+		if arg == "--settings" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("default Claude agent should get --settings flag for polecat role, but Args = %v", rc.Args)
 	}
 }
 
@@ -2524,6 +2637,91 @@ func TestFillRuntimeDefaults(t *testing.T) {
 			t.Errorf("Tmux.ReadyDelayMs should be 0 (unfilled), got %d", result.Tmux.ReadyDelayMs)
 		}
 	})
+
+	t.Run("pi command gets hooks and tmux defaults", func(t *testing.T) {
+		t.Parallel()
+		input := &RuntimeConfig{
+			Command: "pi",
+		}
+
+		result := fillRuntimeDefaults(input)
+
+		// Hooks should be auto-filled for pi
+		if result.Hooks == nil {
+			t.Fatal("Hooks should be auto-filled for pi command")
+		}
+		if result.Hooks.Provider != "pi" {
+			t.Errorf("Hooks.Provider = %q, want pi", result.Hooks.Provider)
+		}
+		if result.Hooks.Dir != ".pi/extensions" {
+			t.Errorf("Hooks.Dir = %q, want .pi/extensions", result.Hooks.Dir)
+		}
+		if result.Hooks.SettingsFile != "gastown-hooks.js" {
+			t.Errorf("Hooks.SettingsFile = %q, want gastown-hooks.js", result.Hooks.SettingsFile)
+		}
+
+		// Tmux should be auto-filled for pi
+		if result.Tmux == nil {
+			t.Fatal("Tmux should be auto-filled for pi command")
+		}
+		if len(result.Tmux.ProcessNames) != 3 {
+			t.Errorf("Tmux.ProcessNames length = %d, want 3", len(result.Tmux.ProcessNames))
+		}
+		expectedNames := []string{"pi", "node", "bun"}
+		for i, want := range expectedNames {
+			if i < len(result.Tmux.ProcessNames) && result.Tmux.ProcessNames[i] != want {
+				t.Errorf("Tmux.ProcessNames[%d] = %q, want %q", i, result.Tmux.ProcessNames[i], want)
+			}
+		}
+		if result.Tmux.ReadyDelayMs != 3000 {
+			t.Errorf("Tmux.ReadyDelayMs = %d, want 3000", result.Tmux.ReadyDelayMs)
+		}
+
+		// PromptMode should default to "arg" for pi
+		if result.PromptMode != "arg" {
+			t.Errorf("PromptMode = %q, want arg", result.PromptMode)
+		}
+	})
+
+	t.Run("pi preserves user-specified hooks", func(t *testing.T) {
+		t.Parallel()
+		input := &RuntimeConfig{
+			Command: "pi",
+			Hooks: &RuntimeHooksConfig{
+				Provider:     "custom",
+				Dir:          "custom-dir",
+				SettingsFile: "custom.js",
+			},
+		}
+
+		result := fillRuntimeDefaults(input)
+
+		// User-specified hooks should be preserved
+		if result.Hooks.Provider != "custom" {
+			t.Errorf("Hooks.Provider = %q, want custom (user-specified)", result.Hooks.Provider)
+		}
+	})
+
+	t.Run("pi preserves user-specified tmux", func(t *testing.T) {
+		t.Parallel()
+		input := &RuntimeConfig{
+			Command: "pi",
+			Tmux: &RuntimeTmuxConfig{
+				ProcessNames: []string{"custom-pi"},
+				ReadyDelayMs: 5000,
+			},
+		}
+
+		result := fillRuntimeDefaults(input)
+
+		// User-specified tmux should be preserved
+		if result.Tmux.ProcessNames[0] != "custom-pi" {
+			t.Errorf("Tmux.ProcessNames[0] = %q, want custom-pi (user-specified)", result.Tmux.ProcessNames[0])
+		}
+		if result.Tmux.ReadyDelayMs != 5000 {
+			t.Errorf("Tmux.ReadyDelayMs = %d, want 5000 (user-specified)", result.Tmux.ReadyDelayMs)
+		}
+	})
 }
 
 // TestLookupAgentConfigPreservesCustomFields verifies that custom agents
@@ -3166,7 +3364,7 @@ func TestEscalationConfigRoundTrip(t *testing.T) {
 			HumanSMS:   "+15551234567",
 		},
 		StaleThreshold:   "2h",
-		MaxReescalations: 3,
+		MaxReescalations: intPtr(3),
 	}
 
 	if err := SaveEscalationConfig(path, original); err != nil {
@@ -3187,8 +3385,8 @@ func TestEscalationConfigRoundTrip(t *testing.T) {
 	if loaded.StaleThreshold != original.StaleThreshold {
 		t.Errorf("StaleThreshold = %q, want %q", loaded.StaleThreshold, original.StaleThreshold)
 	}
-	if loaded.MaxReescalations != original.MaxReescalations {
-		t.Errorf("MaxReescalations = %d, want %d", loaded.MaxReescalations, original.MaxReescalations)
+	if *loaded.MaxReescalations != *original.MaxReescalations {
+		t.Errorf("MaxReescalations = %d, want %d", *loaded.MaxReescalations, *original.MaxReescalations)
 	}
 	if loaded.Contacts.HumanEmail != original.Contacts.HumanEmail {
 		t.Errorf("Contacts.HumanEmail = %q, want %q", loaded.Contacts.HumanEmail, original.Contacts.HumanEmail)
@@ -3226,8 +3424,8 @@ func TestEscalationConfigDefaults(t *testing.T) {
 	if cfg.StaleThreshold != "4h" {
 		t.Errorf("StaleThreshold = %q, want %q", cfg.StaleThreshold, "4h")
 	}
-	if cfg.MaxReescalations != 2 {
-		t.Errorf("MaxReescalations = %d, want %d", cfg.MaxReescalations, 2)
+	if cfg.MaxReescalations == nil || *cfg.MaxReescalations != 2 {
+		t.Errorf("MaxReescalations = %v, want %d", cfg.MaxReescalations, 2)
 	}
 
 	// Check default routes
@@ -3307,7 +3505,7 @@ func TestEscalationConfigValidation(t *testing.T) {
 			config: &EscalationConfig{
 				Type:             "escalation",
 				Version:          1,
-				MaxReescalations: -1,
+				MaxReescalations: intPtr(-1),
 			},
 			wantErr: true,
 			errMsg:  "max_reescalations must be non-negative",
@@ -3423,23 +3621,30 @@ func TestEscalationConfigGetMaxReescalations(t *testing.T) {
 		expected int
 	}{
 		{
-			name:     "default when zero",
+			name:     "default when nil",
 			config:   &EscalationConfig{},
 			expected: 2,
 		},
 		{
+			name: "explicit zero means never re-escalate",
+			config: &EscalationConfig{
+				MaxReescalations: intPtr(0),
+			},
+			expected: 0,
+		},
+		{
 			name: "custom value",
 			config: &EscalationConfig{
-				MaxReescalations: 5,
+				MaxReescalations: intPtr(5),
 			},
 			expected: 5,
 		},
 		{
-			name: "default when negative (should not happen after validation)",
+			name: "negative returns negative (should not happen after validation)",
 			config: &EscalationConfig{
-				MaxReescalations: -1,
+				MaxReescalations: intPtr(-1),
 			},
-			expected: 2,
+			expected: -1,
 		},
 	}
 
@@ -3672,6 +3877,61 @@ func TestBuildStartupCommandWithAgentOverride_SetsGTAgent(t *testing.T) {
 	}
 }
 
+func TestBuildStartupCommandWithAgentOverride_SetsGTProcessNames(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	// Create necessary config files
+	townSettings := NewTownSettings()
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+	if err := SaveRigSettings(RigSettingsPath(rigPath), NewRigSettings()); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd, err := BuildStartupCommandWithAgentOverride(
+		map[string]string{"GT_ROLE": constants.RoleWitness},
+		rigPath,
+		"",
+		"gemini",
+	)
+	if err != nil {
+		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
+	}
+
+	// Should include GT_PROCESS_NAMES with gemini's process names
+	if !strings.Contains(cmd, "GT_PROCESS_NAMES=gemini") {
+		t.Errorf("expected GT_PROCESS_NAMES=gemini in command, got: %q", cmd)
+	}
+}
+
+func TestBuildStartupCommand_SetsGTProcessNames(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	townSettings := NewTownSettings()
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+	if err := SaveRigSettings(RigSettingsPath(rigPath), NewRigSettings()); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd := BuildStartupCommand(
+		map[string]string{"GT_ROLE": constants.RoleWitness},
+		rigPath,
+		"",
+	)
+
+	// Default agent is claude — GT_PROCESS_NAMES should include node,claude
+	if !strings.Contains(cmd, "GT_PROCESS_NAMES=") {
+		t.Errorf("expected GT_PROCESS_NAMES in command, got: %q", cmd)
+	}
+}
+
 // TestBuildStartupCommandWithAgentOverride_UsesOverrideWhenNoTownRoot tests that
 // agentOverride is respected even when findTownRootFromCwd fails.
 // This is a regression test for the bug where `gt deacon start --agent codex`
@@ -3712,9 +3972,9 @@ func TestBuildStartupCommandWithAgentOverride_UsesOverrideWhenNoTownRoot(t *test
 	if strings.Contains(cmd, "claude") {
 		t.Errorf("expected command to NOT contain 'claude' but got: %q", cmd)
 	}
-	// Should have the codex YOLO flag
-	if !strings.Contains(cmd, "--yolo") {
-		t.Errorf("expected command to contain '--yolo' (codex flag) but got: %q", cmd)
+	// Should have the codex permissive approval/sandbox flag.
+	if !strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("expected command to contain '--dangerously-bypass-approvals-and-sandbox' (codex flag) but got: %q", cmd)
 	}
 	// Should set GT_AGENT=codex
 	if !strings.Contains(cmd, "GT_AGENT=codex") {
@@ -3746,8 +4006,473 @@ func TestBuildStartupCommandWithAgentOverride_NoGTAgentWhenNoOverride(t *testing
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
 
-	// Should NOT include GT_AGENT when no override is used
-	if strings.Contains(cmd, "GT_AGENT=") {
-		t.Errorf("expected no GT_AGENT in command when no override, got: %q", cmd)
+	// GT_AGENT should be set from the resolved provider for liveness detection,
+	// even when no explicit override is used.
+	if !strings.Contains(cmd, "GT_AGENT=") {
+		t.Errorf("expected GT_AGENT in command for liveness detection, got: %q", cmd)
+	}
+}
+
+// TestBuildStartupCommand_UsesGTRootFromEnvVars verifies that when rigPath is empty
+// but GT_ROOT is provided in envVars, the function uses GT_ROOT to resolve town
+// settings and respects role_agents configuration. This is the path hit when the
+// daemon spawns town-level agents (deacon, mayor) where rigPath is always empty.
+// Fixes #433
+func TestBuildStartupCommand_UsesGTRootFromEnvVars(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "claude"
+	townSettings.Agents = map[string]*RuntimeConfig{
+		"claude-sonnet": {
+			Command: "claude",
+			Args:    []string{"--dangerously-skip-permissions", "--model", "sonnet"},
+		},
+	}
+	townSettings.RoleAgents = map[string]string{
+		constants.RoleDeacon: "claude-sonnet",
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	envVars := map[string]string{
+		"GT_ROLE": constants.RoleDeacon,
+		"GT_ROOT": townRoot,
+	}
+	cmd := BuildStartupCommand(envVars, "", "")
+
+	if !strings.Contains(cmd, "--model sonnet") {
+		t.Errorf("expected --model sonnet from role_agents[deacon], got: %q", cmd)
+	}
+}
+
+func TestBuildStartupCommandWithAgentOverride_UsesGTRootFromEnvVars(t *testing.T) {
+	t.Parallel()
+	townRoot := t.TempDir()
+
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "claude"
+	townSettings.Agents = map[string]*RuntimeConfig{
+		"claude-sonnet": {
+			Command: "claude",
+			Args:    []string{"--dangerously-skip-permissions", "--model", "sonnet"},
+		},
+	}
+	townSettings.RoleAgents = map[string]string{
+		constants.RoleDeacon: "claude-sonnet",
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	envVars := map[string]string{
+		"GT_ROLE": constants.RoleDeacon,
+		"GT_ROOT": townRoot,
+	}
+	cmd, err := BuildStartupCommandWithAgentOverride(envVars, "", "", "")
+	if err != nil {
+		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
+	}
+
+	if !strings.Contains(cmd, "--model sonnet") {
+		t.Errorf("expected --model sonnet from role_agents[deacon], got: %q", cmd)
+	}
+}
+
+// TestMergeQueueConfig_PartialJSON_BoolDefaults verifies that omitted *bool fields
+// in a partial merge_queue JSON config deserialize to nil (not false), and that the
+// nil-safe accessor methods return the correct defaults.
+//
+// This is a regression test for: "Partial merge_queue config silently disables
+// refinery tests — omitted booleans deserialize to Go zero values (false)".
+// The *bool pointer approach prevents this, and this test locks in that guarantee.
+func TestMergeQueueConfig_PartialJSON_BoolDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		json string
+		// Expected accessor results when *bool fields are omitted (nil)
+		wantRunTests               bool
+		wantDeleteMerged           bool
+		wantPolecatIntegration     bool
+		wantRefineryIntegration    bool
+		wantAutoLand               bool
+	}{
+		{
+			name: "minimal config — all *bool fields omitted",
+			json: `{"enabled": true, "on_conflict": "assign_back"}`,
+			// nil *bool → accessor defaults
+			wantRunTests:            true,
+			wantDeleteMerged:        true,
+			wantPolecatIntegration:  true,
+			wantRefineryIntegration: true,
+			wantAutoLand:            false,
+		},
+		{
+			name: "explicit false — should be respected",
+			json: `{
+				"enabled": true,
+				"on_conflict": "assign_back",
+				"run_tests": false,
+				"delete_merged_branches": false,
+				"integration_branch_polecat_enabled": false,
+				"integration_branch_refinery_enabled": false,
+				"integration_branch_auto_land": false
+			}`,
+			wantRunTests:            false,
+			wantDeleteMerged:        false,
+			wantPolecatIntegration:  false,
+			wantRefineryIntegration: false,
+			wantAutoLand:            false,
+		},
+		{
+			name: "explicit true — should be respected",
+			json: `{
+				"enabled": true,
+				"on_conflict": "assign_back",
+				"run_tests": true,
+				"delete_merged_branches": true,
+				"integration_branch_polecat_enabled": true,
+				"integration_branch_refinery_enabled": true,
+				"integration_branch_auto_land": true
+			}`,
+			wantRunTests:            true,
+			wantDeleteMerged:        true,
+			wantPolecatIntegration:  true,
+			wantRefineryIntegration: true,
+			wantAutoLand:            true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg MergeQueueConfig
+			if err := json.Unmarshal([]byte(tt.json), &cfg); err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+
+			if got := cfg.IsRunTestsEnabled(); got != tt.wantRunTests {
+				t.Errorf("IsRunTestsEnabled() = %v, want %v", got, tt.wantRunTests)
+			}
+			if got := cfg.IsDeleteMergedBranchesEnabled(); got != tt.wantDeleteMerged {
+				t.Errorf("IsDeleteMergedBranchesEnabled() = %v, want %v", got, tt.wantDeleteMerged)
+			}
+			if got := cfg.IsPolecatIntegrationEnabled(); got != tt.wantPolecatIntegration {
+				t.Errorf("IsPolecatIntegrationEnabled() = %v, want %v", got, tt.wantPolecatIntegration)
+			}
+			if got := cfg.IsRefineryIntegrationEnabled(); got != tt.wantRefineryIntegration {
+				t.Errorf("IsRefineryIntegrationEnabled() = %v, want %v", got, tt.wantRefineryIntegration)
+			}
+			if got := cfg.IsIntegrationBranchAutoLandEnabled(); got != tt.wantAutoLand {
+				t.Errorf("IsIntegrationBranchAutoLandEnabled() = %v, want %v", got, tt.wantAutoLand)
+			}
+		})
+	}
+}
+
+// TestMergeQueueConfig_PartialJSON_NilPointers verifies that omitted *bool fields
+// deserialize to nil, not to a pointer to false. This is the underlying mechanism
+// that makes the accessor defaults work.
+func TestMergeQueueConfig_PartialJSON_NilPointers(t *testing.T) {
+	t.Parallel()
+
+	partialJSON := `{"enabled": true, "on_conflict": "assign_back"}`
+	var cfg MergeQueueConfig
+	if err := json.Unmarshal([]byte(partialJSON), &cfg); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if cfg.RunTests != nil {
+		t.Errorf("RunTests should be nil when omitted, got %v", *cfg.RunTests)
+	}
+	if cfg.DeleteMergedBranches != nil {
+		t.Errorf("DeleteMergedBranches should be nil when omitted, got %v", *cfg.DeleteMergedBranches)
+	}
+	if cfg.IntegrationBranchPolecatEnabled != nil {
+		t.Errorf("IntegrationBranchPolecatEnabled should be nil when omitted, got %v", *cfg.IntegrationBranchPolecatEnabled)
+	}
+	if cfg.IntegrationBranchRefineryEnabled != nil {
+		t.Errorf("IntegrationBranchRefineryEnabled should be nil when omitted, got %v", *cfg.IntegrationBranchRefineryEnabled)
+	}
+	if cfg.IntegrationBranchAutoLand != nil {
+		t.Errorf("IntegrationBranchAutoLand should be nil when omitted, got %v", *cfg.IntegrationBranchAutoLand)
+	}
+}
+
+// --- Ephemeral Cost Tier Tests ---
+
+func TestTryResolveFromEphemeralTier(t *testing.T) {
+	t.Run("no env var returns not handled", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "")
+		rc, handled := tryResolveFromEphemeralTier("witness")
+		if handled {
+			t.Error("expected handled=false when GT_COST_TIER not set")
+		}
+		if rc != nil {
+			t.Errorf("expected nil rc when GT_COST_TIER not set, got %+v", rc)
+		}
+	})
+
+	t.Run("invalid tier returns not handled", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "premium")
+		rc, handled := tryResolveFromEphemeralTier("witness")
+		if handled {
+			t.Error("expected handled=false for invalid tier")
+		}
+		if rc != nil {
+			t.Errorf("expected nil rc for invalid tier, got %+v", rc)
+		}
+	})
+
+	t.Run("budget tier witness gets haiku", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "budget")
+		rc, handled := tryResolveFromEphemeralTier("witness")
+		if !handled {
+			t.Fatal("expected handled=true for witness in budget tier")
+		}
+		if rc == nil {
+			t.Fatal("expected RuntimeConfig for witness in budget tier")
+		}
+		if !isClaudeCommand(rc.Command) {
+			t.Errorf("Command = %q, want claude", rc.Command)
+		}
+		found := false
+		for i, arg := range rc.Args {
+			if arg == "--model" && i+1 < len(rc.Args) && rc.Args[i+1] == "haiku" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Args %v missing --model haiku", rc.Args)
+		}
+	})
+
+	t.Run("economy tier polecat returns handled with nil rc (use default)", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "economy")
+		rc, handled := tryResolveFromEphemeralTier("polecat")
+		if !handled {
+			t.Error("expected handled=true for polecat in economy tier (tier manages this role)")
+		}
+		if rc != nil {
+			t.Errorf("expected nil rc for polecat in economy tier (should use default), got %+v", rc)
+		}
+	})
+
+	t.Run("economy tier mayor gets sonnet", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "economy")
+		rc, handled := tryResolveFromEphemeralTier("mayor")
+		if !handled {
+			t.Fatal("expected handled=true for mayor in economy tier")
+		}
+		if rc == nil {
+			t.Fatal("expected RuntimeConfig for mayor in economy tier")
+		}
+		found := false
+		for i, arg := range rc.Args {
+			if arg == "--model" && i+1 < len(rc.Args) && rc.Args[i+1] == "sonnet" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Args %v missing --model sonnet", rc.Args)
+		}
+	})
+
+	t.Run("standard tier returns handled with nil rc for all roles", func(t *testing.T) {
+		t.Setenv("GT_COST_TIER", "standard")
+		for _, role := range []string{"mayor", "deacon", "witness", "refinery", "polecat", "crew"} {
+			rc, handled := tryResolveFromEphemeralTier(role)
+			if !handled {
+				t.Errorf("standard tier should return handled=true for %s", role)
+			}
+			if rc != nil {
+				t.Errorf("standard tier should return nil rc for %s (use default), got %+v", role, rc)
+			}
+		}
+	})
+}
+
+func TestResolveRoleAgentConfig_WithEphemeralTier(t *testing.T) {
+	townRoot := t.TempDir()
+
+	// Create minimal town settings
+	townSettings := NewTownSettings()
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	t.Setenv("GT_COST_TIER", "budget")
+
+	rc := ResolveRoleAgentConfig("witness", townRoot, "")
+	if rc == nil {
+		t.Fatal("expected RuntimeConfig for witness with ephemeral budget tier")
+	}
+	if !isClaudeCommand(rc.Command) {
+		t.Errorf("Command = %q, want claude", rc.Command)
+	}
+	found := false
+	for i, arg := range rc.Args {
+		if arg == "--model" && i+1 < len(rc.Args) && rc.Args[i+1] == "haiku" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Args %v missing --model haiku for budget witness", rc.Args)
+	}
+}
+
+func TestResolveRoleAgentConfig_EphemeralOverridesPersistent(t *testing.T) {
+	townRoot := t.TempDir()
+
+	// Create town settings with economy tier persisted
+	townSettings := NewTownSettings()
+	if err := ApplyCostTier(townSettings, TierEconomy); err != nil {
+		t.Fatalf("ApplyCostTier: %v", err)
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// Set ephemeral to budget — should override
+	t.Setenv("GT_COST_TIER", "budget")
+
+	// witness is sonnet in economy, haiku in budget
+	rc := ResolveRoleAgentConfig("witness", townRoot, "")
+	if rc == nil {
+		t.Fatal("expected RuntimeConfig for witness")
+	}
+	found := false
+	for i, arg := range rc.Args {
+		if arg == "--model" && i+1 < len(rc.Args) && rc.Args[i+1] == "haiku" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ephemeral budget should override persistent economy; witness Args %v missing --model haiku", rc.Args)
+	}
+}
+
+func TestResolveRoleAgentConfig_EphemeralStandardSkipsPersisted(t *testing.T) {
+	townRoot := t.TempDir()
+
+	// Create town settings with budget tier persisted (haiku for witness)
+	townSettings := NewTownSettings()
+	if err := ApplyCostTier(townSettings, TierBudget); err != nil {
+		t.Fatalf("ApplyCostTier: %v", err)
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// Set ephemeral to standard — should skip persisted budget config
+	t.Setenv("GT_COST_TIER", "standard")
+
+	// polecat was claude-sonnet in budget, should now use default (opus/claude)
+	rc := ResolveRoleAgentConfig("polecat", townRoot, "")
+	if rc == nil {
+		t.Fatal("expected RuntimeConfig for polecat")
+	}
+	// Should be default claude (opus), NOT claude-sonnet from stale budget config
+	for i, arg := range rc.Args {
+		if arg == "--model" && i+1 < len(rc.Args) {
+			model := rc.Args[i+1]
+			if model == "sonnet" || model == "haiku" {
+				t.Errorf("ephemeral standard should not use stale budget model; got --model %s", model)
+			}
+		}
+	}
+}
+
+func TestResolveRoleAgentConfig_EphemeralRespectsNonClaudeOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := t.TempDir()
+
+	// Create rig settings with gemini as witness (non-Claude agent)
+	rigSettingsDir := filepath.Join(rigPath, ".settings")
+	if err := os.MkdirAll(rigSettingsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	rigSettings := &RigSettings{
+		Type:    "rig-settings",
+		Version: 1,
+		RoleAgents: map[string]string{
+			"witness": "gemini",
+		},
+	}
+	if err := SaveRigSettings(RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	// Create town settings with gemini agent defined
+	townSettings := NewTownSettings()
+	townSettings.Agents["gemini"] = &RuntimeConfig{
+		Command: "gemini",
+		Args:    []string{},
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// Set ephemeral budget tier — should NOT override the gemini witness
+	t.Setenv("GT_COST_TIER", "budget")
+
+	rc := ResolveRoleAgentConfig("witness", townRoot, rigPath)
+	if rc == nil {
+		t.Fatal("expected RuntimeConfig for witness")
+	}
+	// Should still be gemini, not claude-haiku from budget tier
+	if rc.Command != "gemini" {
+		t.Errorf("expected gemini for witness (non-Claude rig override), got Command=%q", rc.Command)
+	}
+}
+
+func TestResolveRoleAgentConfig_EphemeralDefaultPreservesNonClaudeOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := t.TempDir()
+
+	// Create rig settings with gemini as polecat (non-Claude agent)
+	rigSettingsDir := filepath.Join(rigPath, ".settings")
+	if err := os.MkdirAll(rigSettingsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	rigSettings := &RigSettings{
+		Type:    "rig-settings",
+		Version: 1,
+		RoleAgents: map[string]string{
+			"polecat": "gemini",
+		},
+	}
+	if err := SaveRigSettings(RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	// Create town settings with gemini agent defined
+	townSettings := NewTownSettings()
+	townSettings.Agents["gemini"] = &RuntimeConfig{
+		Command: "gemini",
+		Args:    []string{},
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// Economy tier maps polecat to "" (use default) — should NOT override gemini
+	t.Setenv("GT_COST_TIER", "economy")
+
+	rc := ResolveRoleAgentConfig("polecat", townRoot, rigPath)
+	if rc == nil {
+		t.Fatal("expected RuntimeConfig for polecat")
+	}
+	// Should still be gemini, not default claude — the nil-rc path must
+	// preserve explicit non-Claude overrides
+	if rc.Command != "gemini" {
+		t.Errorf("expected gemini for polecat (non-Claude rig override with tier default), got Command=%q", rc.Command)
 	}
 }

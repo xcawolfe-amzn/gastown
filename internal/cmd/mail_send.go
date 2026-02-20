@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
@@ -96,6 +95,13 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 	// Set CC recipients
 	msg.CC = mailCC
 
+	// Suppress router-side notification when --no-notify is passed.
+	// Otherwise the router handles idle-aware notification per-recipient,
+	// which also works correctly for fan-out (groups, lists, channels).
+	if mailNoNotify {
+		msg.SuppressNotify = true
+	}
+
 	// Handle reply-to: auto-set type to reply and look up thread
 	if mailReplyTo != "" {
 		msg.ReplyTo = mailReplyTo
@@ -109,11 +115,11 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 		router := mail.NewRouter(workDir)
 		mailbox, err := router.GetMailbox(from)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ Could not open mailbox for thread lookup: %v\n", err)
+			style.PrintWarning("could not open mailbox for thread lookup: %v", err)
 		} else {
 			original, err := mailbox.Get(mailReplyTo)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ Could not find original message %s for threading (new thread will be created)\n", mailReplyTo)
+				style.PrintWarning("could not find original message %s for threading (new thread will be created)", mailReplyTo)
 			} else {
 				msg.ThreadID = original.ThreadID
 			}
@@ -134,6 +140,7 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// Fall back to legacy routing if resolver fails
 		router := mail.NewRouter(workDir)
+		defer router.WaitPendingNotifications()
 		if err := router.Send(msg); err != nil {
 			return fmt.Errorf("sending message: %w", err)
 		}
@@ -145,6 +152,7 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 
 	// Route based on recipient type, collecting errors instead of failing early
 	router := mail.NewRouter(workDir)
+	defer router.WaitPendingNotifications()
 	var recipientAddrs []string
 	var sendErrs []string
 

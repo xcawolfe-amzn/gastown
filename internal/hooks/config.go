@@ -76,19 +76,26 @@ func UnmarshalSettings(data []byte) (*SettingsJSON, error) {
 }
 
 // MarshalSettings serializes a SettingsJSON, preserving unknown fields.
+// Does not mutate the input — works on a copy of Extra.
 func MarshalSettings(s *SettingsJSON) ([]byte, error) {
-	if s.Extra == nil {
-		s.Extra = make(map[string]json.RawMessage)
+	// Copy Extra to avoid mutating the input
+	out := make(map[string]json.RawMessage, len(s.Extra))
+	for k, v := range s.Extra {
+		out[k] = v
 	}
 
-	// Write known fields back into the map
+	// Write known fields back into the map, or delete if zero-valued
 	if s.EditorMode != "" {
 		raw, _ := json.Marshal(s.EditorMode)
-		s.Extra["editorMode"] = raw
+		out["editorMode"] = raw
+	} else {
+		delete(out, "editorMode")
 	}
 	if s.EnabledPlugins != nil {
 		raw, _ := json.Marshal(s.EnabledPlugins)
-		s.Extra["enabledPlugins"] = raw
+		out["enabledPlugins"] = raw
+	} else {
+		delete(out, "enabledPlugins")
 	}
 
 	// Always write hooks (even if empty, it's the managed section)
@@ -96,9 +103,9 @@ func MarshalSettings(s *SettingsJSON) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.Extra["hooks"] = raw
+	out["hooks"] = raw
 
-	return json.MarshalIndent(s.Extra, "", "  ")
+	return json.MarshalIndent(out, "", "  ")
 }
 
 // LoadSettings reads and parses a settings.json file, preserving unknown fields.
@@ -133,16 +140,13 @@ type Target struct {
 	Path string // Full path to .claude/settings.json
 	Key  string // Override key: "gastown/crew", "mayor", etc.
 	Rig  string // Rig name or empty for town-level
-	Role string // crew, witness, refinery, polecats, mayor, deacon
+	Role string // Informational only — does NOT participate in override resolution (Key does). Singular form matching RoleSettingsDir: crew, witness, refinery, polecat, mayor, deacon.
 }
 
 // DisplayKey returns a human-readable label for the target.
 // For targets with a rig, shows "rig/role"; for town-level targets, shows the role.
 func (t Target) DisplayKey() string {
-	if t.Rig != "" {
-		return t.Rig + "/" + t.Role
-	}
-	return t.Role
+	return t.Key
 }
 
 // Merge merges an override config into a base config using per-matcher merging.
@@ -160,9 +164,20 @@ func Merge(base, override *HooksConfig) *HooksConfig {
 	return applyOverride(result, override)
 }
 
+// DefaultOverrides returns built-in role-specific hook overrides.
+// Currently empty — the merge mechanism is retained for future use.
+// On-disk overrides (in ~/.gt/hooks-overrides/) layer on top of DefaultBase().
+func DefaultOverrides() map[string]*HooksConfig {
+	return map[string]*HooksConfig{}
+}
+
 // ComputeExpected computes the expected HooksConfig for a target by loading
 // the base config and applying all applicable overrides in order of specificity.
 // If no base config exists, uses DefaultBase().
+//
+// For each override key, built-in defaults (from DefaultOverrides, currently empty)
+// are merged first, then on-disk overrides layer on top. On-disk overrides can
+// replace or extend base hooks by providing matching PreToolUse entries.
 func ComputeExpected(target string) (*HooksConfig, error) {
 	base, err := LoadBase()
 	if err != nil {
@@ -173,8 +188,15 @@ func ComputeExpected(target string) (*HooksConfig, error) {
 		}
 	}
 
+	defaults := DefaultOverrides()
 	result := base
 	for _, overrideKey := range GetApplicableOverrides(target) {
+		// Always apply built-in defaults first
+		if def, ok := defaults[overrideKey]; ok {
+			result = Merge(result, def)
+		}
+
+		// Then layer on-disk overrides on top
 		override, err := LoadOverride(overrideKey)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -189,11 +211,13 @@ func ComputeExpected(target string) (*HooksConfig, error) {
 }
 
 // DiscoverTargets finds all managed .claude/settings.json locations in the workspace.
+// Settings are installed in gastown-managed parent directories and passed to Claude Code
+// via --settings flag. Crew members in a rig share one settings file, as do polecats.
 // Returns Target structs with path, override key, rig, and role information.
 func DiscoverTargets(townRoot string) ([]Target, error) {
 	var targets []Target
 
-	// Town-level targets
+	// Town-level targets (mayor/deacon cwd IS the settings dir)
 	targets = append(targets, Target{
 		Path: filepath.Join(townRoot, "mayor", ".claude", "settings.json"),
 		Key:  "mayor",
@@ -225,15 +249,8 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 			continue
 		}
 
-		// Rig-level
-		targets = append(targets, Target{
-			Path: filepath.Join(rigPath, ".claude", "settings.json"),
-			Key:  rigName + "/rig",
-			Rig:  rigName,
-			Role: "rig",
-		})
-
-		// Crew-level
+		// Crew — one shared settings file in the crew parent directory.
+		// All crew members share this via --settings flag.
 		crewDir := filepath.Join(rigPath, "crew")
 		if info, err := os.Stat(crewDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
@@ -242,48 +259,21 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 				Rig:  rigName,
 				Role: "crew",
 			})
-
-			// Individual crew members
-			if members, err := os.ReadDir(crewDir); err == nil {
-				for _, m := range members {
-					if m.IsDir() && !strings.HasPrefix(m.Name(), ".") {
-						targets = append(targets, Target{
-							Path: filepath.Join(crewDir, m.Name(), ".claude", "settings.json"),
-							Key:  rigName + "/crew",
-							Rig:  rigName,
-							Role: "crew",
-						})
-					}
-				}
-			}
 		}
 
-		// Polecats-level
+		// Polecats — one shared settings file in the polecats parent directory.
+		// All polecats share this via --settings flag.
 		polecatsDir := filepath.Join(rigPath, "polecats")
 		if info, err := os.Stat(polecatsDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
 				Path: filepath.Join(polecatsDir, ".claude", "settings.json"),
 				Key:  rigName + "/polecats",
 				Rig:  rigName,
-				Role: "polecats",
+				Role: "polecat",
 			})
-
-			// Individual polecats
-			if polecats, err := os.ReadDir(polecatsDir); err == nil {
-				for _, p := range polecats {
-					if p.IsDir() && !strings.HasPrefix(p.Name(), ".") {
-						targets = append(targets, Target{
-							Path: filepath.Join(polecatsDir, p.Name(), ".claude", "settings.json"),
-							Key:  rigName + "/polecats",
-							Rig:  rigName,
-							Role: "polecats",
-						})
-					}
-				}
-			}
 		}
 
-		// Witness
+		// Witness — settings in the witness parent directory
 		witnessDir := filepath.Join(rigPath, "witness")
 		if info, err := os.Stat(witnessDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
@@ -294,7 +284,7 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 			})
 		}
 
-		// Refinery
+		// Refinery — settings in the refinery parent directory
 		refineryDir := filepath.Join(rigPath, "refinery")
 		if info, err := os.Stat(refineryDir); err == nil && info.IsDir() {
 			targets = append(targets, Target{
@@ -439,27 +429,49 @@ func MarshalConfig(cfg *HooksConfig) ([]byte, error) {
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-// ValidTarget returns true if the target string is a valid override target.
-// Valid targets are roles (crew, witness, etc.) or rig/role combinations.
-func ValidTarget(target string) bool {
+// NormalizeTarget normalizes a target string, mapping singular role aliases
+// to their canonical forms (e.g., "polecat" → "polecats", "rig/polecat" → "rig/polecats").
+// Returns the normalized target and true if valid, or ("", false) if invalid.
+func NormalizeTarget(target string) (string, bool) {
+	// Alias map: singular → canonical
+	aliases := map[string]string{
+		"polecat": "polecats",
+	}
+
 	validRoles := map[string]bool{
 		"crew": true, "witness": true, "refinery": true,
 		"polecats": true, "mayor": true, "deacon": true,
-		"rig": true,
 	}
 
 	// Simple role target
 	if validRoles[target] {
-		return true
+		return target, true
+	}
+	if canonical, ok := aliases[target]; ok {
+		return canonical, true
 	}
 
 	// Rig/role target (e.g., "gastown/crew")
 	parts := strings.SplitN(target, "/", 2)
-	if len(parts) == 2 && parts[0] != "" && validRoles[parts[1]] {
-		return true
+	if len(parts) == 2 && parts[0] != "" {
+		role := parts[1]
+		if validRoles[role] {
+			return target, true
+		}
+		if canonical, ok := aliases[role]; ok {
+			return parts[0] + "/" + canonical, true
+		}
 	}
 
-	return false
+	return "", false
+}
+
+// ValidTarget returns true if the target string is a valid override target.
+// Valid targets are roles (crew, witness, etc.) or rig/role combinations.
+// Accepts singular aliases (e.g., "polecat") — use NormalizeTarget to get canonical form.
+func ValidTarget(target string) bool {
+	_, ok := NormalizeTarget(target)
+	return ok
 }
 
 // DefaultBase returns a sensible default base configuration.

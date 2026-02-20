@@ -20,12 +20,15 @@ func (b *Beads) CreateDogAgentBead(name, location string) (*Issue, error) {
 		"location:" + location,
 	}
 
+	description := formatDogDescription(name, location)
+
 	args := []string{
 		"create", "--json",
 		"--id=" + beadID,
 		"--type=agent",
 		"--role-type=dog",
 		"--title=" + title,
+		"--description=" + description,
 		"--labels=" + strings.Join(labels, ","),
 	}
 
@@ -98,21 +101,16 @@ func (b *Beads) ResetDogAgentBead(name string) error {
 	return nil
 }
 
-// DeleteDogAgentBead finds and deletes the agent bead for a dog.
-// Deprecated: Use ResetDogAgentBead instead to preserve persistent identity.
-// Returns nil if the bead doesn't exist (idempotent).
-func (b *Beads) DeleteDogAgentBead(name string) error {
-	issue, err := b.FindDogAgentBead(name)
-	if err != nil {
-		return fmt.Errorf("finding dog bead: %w", err)
-	}
-	if issue == nil {
-		return nil // Already doesn't exist - idempotent
-	}
-
-	err = b.DeleteAgentBead(issue.ID)
-	if err != nil {
-		return fmt.Errorf("deleting bead %s: %w", issue.ID, err)
-	}
-	return nil
+// formatDogDescription creates a description for a dog agent bead.
+// Includes role_type, rig, and location metadata so the mail router
+// can resolve the agent address from the description.
+func formatDogDescription(name, location string) string {
+	return strings.Join([]string{
+		fmt.Sprintf("Dog: %s", name),
+		"",
+		"role_type: dog",
+		"rig: town",
+		fmt.Sprintf("location: %s", location),
+	}, "\n")
 }
+

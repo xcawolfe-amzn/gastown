@@ -16,8 +16,9 @@ func TestAgentEnv_Mayor(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "mayor")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertEnv(t, env, "GIT_CEILING_DIRECTORIES", "/town") // prevents git walking to umbrella
+	assertEnv(t, env, "NODE_OPTIONS", "")                  // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")                    // cleared to prevent nested session detection
 	assertNotSet(t, env, "GT_RIG")
-	assertNotSet(t, env, "BEADS_NO_DAEMON")
 }
 
 func TestAgentEnv_Witness(t *testing.T) {
@@ -38,11 +39,10 @@ func TestAgentEnv_Witness(t *testing.T) {
 func TestAgentEnv_Polecat(t *testing.T) {
 	t.Parallel()
 	env := AgentEnv(AgentEnvConfig{
-		Role:          "polecat",
-		Rig:           "myrig",
-		AgentName:     "Toast",
-		TownRoot:      "/town",
-		BeadsNoDaemon: true,
+		Role:      "polecat",
+		Rig:       "myrig",
+		AgentName: "Toast",
+		TownRoot:  "/town",
 	})
 
 	assertEnv(t, env, "GT_ROLE", "myrig/polecats/Toast") // compound format
@@ -51,18 +51,18 @@ func TestAgentEnv_Polecat(t *testing.T) {
 	assertEnv(t, env, "BD_ACTOR", "myrig/polecats/Toast")
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "Toast")
 	assertEnv(t, env, "BEADS_AGENT_NAME", "myrig/Toast")
-	assertEnv(t, env, "BEADS_NO_DAEMON", "1")
 	assertEnv(t, env, "BD_DOLT_AUTO_COMMIT", "off") // gt-5cc2p: prevent manifest contention
+	assertEnv(t, env, "NODE_OPTIONS", "")            // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")              // cleared to prevent nested session detection
 }
 
 func TestAgentEnv_Crew(t *testing.T) {
 	t.Parallel()
 	env := AgentEnv(AgentEnvConfig{
-		Role:          "crew",
-		Rig:           "myrig",
-		AgentName:     "emma",
-		TownRoot:      "/town",
-		BeadsNoDaemon: true,
+		Role:      "crew",
+		Rig:       "myrig",
+		AgentName: "emma",
+		TownRoot:  "/town",
 	})
 
 	assertEnv(t, env, "GT_ROLE", "myrig/crew/emma") // compound format
@@ -71,23 +71,20 @@ func TestAgentEnv_Crew(t *testing.T) {
 	assertEnv(t, env, "BD_ACTOR", "myrig/crew/emma")
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "emma")
 	assertEnv(t, env, "BEADS_AGENT_NAME", "myrig/emma")
-	assertEnv(t, env, "BEADS_NO_DAEMON", "1")
 }
 
 func TestAgentEnv_Refinery(t *testing.T) {
 	t.Parallel()
 	env := AgentEnv(AgentEnvConfig{
-		Role:          "refinery",
-		Rig:           "myrig",
-		TownRoot:      "/town",
-		BeadsNoDaemon: true,
+		Role:     "refinery",
+		Rig:      "myrig",
+		TownRoot: "/town",
 	})
 
 	assertEnv(t, env, "GT_ROLE", "myrig/refinery") // compound format
 	assertEnv(t, env, "GT_RIG", "myrig")
 	assertEnv(t, env, "BD_ACTOR", "myrig/refinery")
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "myrig/refinery")
-	assertEnv(t, env, "BEADS_NO_DAEMON", "1")
 }
 
 func TestAgentEnv_Deacon(t *testing.T) {
@@ -102,7 +99,6 @@ func TestAgentEnv_Deacon(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "deacon")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertNotSet(t, env, "GT_RIG")
-	assertNotSet(t, env, "BEADS_NO_DAEMON")
 }
 
 func TestAgentEnv_Boot(t *testing.T) {
@@ -117,7 +113,6 @@ func TestAgentEnv_Boot(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "boot")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertNotSet(t, env, "GT_RIG")
-	assertNotSet(t, env, "BEADS_NO_DAEMON")
 }
 
 func TestAgentEnv_WithRuntimeConfigDir(t *testing.T) {
@@ -176,6 +171,114 @@ func TestAgentEnv_EmptyTownRootOmitted(t *testing.T) {
 	// Other keys should still be set
 	assertEnv(t, env, "GT_ROLE", "myrig/polecats/Toast") // compound format
 	assertEnv(t, env, "GT_RIG", "myrig")
+}
+
+func TestAgentEnv_WithAgentOverride(t *testing.T) {
+	t.Parallel()
+	env := AgentEnv(AgentEnvConfig{
+		Role:      "polecat",
+		Rig:       "myrig",
+		AgentName: "Toast",
+		TownRoot:  "/town",
+		Agent:     "codex",
+	})
+
+	assertEnv(t, env, "GT_AGENT", "codex")
+}
+
+func TestAgentEnv_WithoutAgentOverride(t *testing.T) {
+	t.Parallel()
+	env := AgentEnv(AgentEnvConfig{
+		Role:      "polecat",
+		Rig:       "myrig",
+		AgentName: "Toast",
+		TownRoot:  "/town",
+	})
+
+	assertNotSet(t, env, "GT_AGENT")
+}
+
+// TestAgentEnv_AgentOverrideAllRoles verifies that GT_AGENT is emitted for
+// every role that supports agent overrides. This mirrors the actual
+// AgentEnvConfig constructions in each manager's Start method.
+func TestAgentEnv_AgentOverrideAllRoles(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		cfg  AgentEnvConfig
+	}{
+		{
+			name: "polecat via session_manager",
+			cfg: AgentEnvConfig{
+				Role:      "polecat",
+				Rig:       "rig1",
+				AgentName: "Toast",
+				TownRoot:  "/town",
+				Agent:     "codex",
+			},
+		},
+		{
+			name: "witness",
+			cfg: AgentEnvConfig{
+				Role:     "witness",
+				Rig:      "rig1",
+				TownRoot: "/town",
+				Agent:    "gemini",
+			},
+		},
+		{
+			name: "refinery",
+			cfg: AgentEnvConfig{
+				Role:     "refinery",
+				Rig:      "rig1",
+				TownRoot: "/town",
+				Agent:    "codex",
+			},
+		},
+		{
+			name: "deacon",
+			cfg: AgentEnvConfig{
+				Role:     "deacon",
+				TownRoot: "/town",
+				Agent:    "gemini",
+			},
+		},
+		{
+			name: "crew",
+			cfg: AgentEnvConfig{
+				Role:             "crew",
+				Rig:              "rig1",
+				AgentName:        "worker1",
+				TownRoot:         "/town",
+				RuntimeConfigDir: "/config",
+				Agent:            "codex",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := AgentEnv(tc.cfg)
+			assertEnv(t, env, "GT_AGENT", tc.cfg.Agent)
+		})
+	}
+}
+
+// TestAgentEnv_NoAgentOverrideOmitsKey verifies GT_AGENT is absent when
+// Agent is empty, for all roles. This is the default behavior.
+func TestAgentEnv_NoAgentOverrideOmitsKey(t *testing.T) {
+	t.Parallel()
+	roles := []string{"polecat", "witness", "refinery", "deacon", "crew"}
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			t.Parallel()
+			env := AgentEnv(AgentEnvConfig{
+				Role:     role,
+				TownRoot: "/town",
+			})
+			assertNotSet(t, env, "GT_AGENT")
+		})
+	}
 }
 
 func TestShellQuote(t *testing.T) {
@@ -436,5 +539,219 @@ func assertNotSet(t *testing.T, env map[string]string, key string) {
 	t.Helper()
 	if _, ok := env[key]; ok {
 		t.Errorf("env[%q] should not be set, but is %q", key, env[key])
+	}
+}
+
+func TestSanitizeAgentEnv(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		resolvedEnv map[string]string
+		callerEnv   map[string]string
+		wantKey     bool   // expect NODE_OPTIONS to be present in resolvedEnv
+		wantValue   string // expected value if present
+	}{
+		{
+			name:        "neither map has NODE_OPTIONS — sets empty",
+			resolvedEnv: map[string]string{"GT_ROLE": "polecat"},
+			callerEnv:   map[string]string{"GT_ROLE": "polecat"},
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "caller provides NODE_OPTIONS — preserved",
+			resolvedEnv: map[string]string{"NODE_OPTIONS": "--max-old-space-size=4096"},
+			callerEnv:   map[string]string{"NODE_OPTIONS": "--max-old-space-size=4096"},
+			wantKey:     true,
+			wantValue:   "--max-old-space-size=4096",
+		},
+		{
+			name:        "rc.Env provides NODE_OPTIONS in resolvedEnv — preserved",
+			resolvedEnv: map[string]string{"NODE_OPTIONS": "--max-old-space-size=8192"},
+			callerEnv:   map[string]string{},
+			wantKey:     true,
+			wantValue:   "--max-old-space-size=8192",
+		},
+		{
+			name:        "empty maps — sets empty",
+			resolvedEnv: map[string]string{},
+			callerEnv:   map[string]string{},
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "same map without NODE_OPTIONS — sets empty (lifecycle.go pattern)",
+			resolvedEnv: map[string]string{"GT_ROLE": "polecat", "GT_RIG": "myrig"},
+			callerEnv:   nil, // will be set to same map below
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "AgentEnv output with empty callerEnv — preserves empty NODE_OPTIONS",
+			resolvedEnv: map[string]string{"GT_ROLE": "polecat", "NODE_OPTIONS": ""},
+			callerEnv:   map[string]string{},
+			wantKey:     true,
+			wantValue:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callerEnv := tt.callerEnv
+			if callerEnv == nil {
+				// same-map pattern: pass resolvedEnv as both args (lifecycle.go pattern)
+				callerEnv = tt.resolvedEnv
+			}
+			SanitizeAgentEnv(tt.resolvedEnv, callerEnv)
+			val, ok := tt.resolvedEnv["NODE_OPTIONS"]
+			if ok != tt.wantKey {
+				t.Errorf("NODE_OPTIONS present=%v, want %v", ok, tt.wantKey)
+			}
+			if ok && val != tt.wantValue {
+				t.Errorf("NODE_OPTIONS=%q, want %q", val, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestSanitizeAgentEnv_ClearsClaudeCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		resolvedEnv map[string]string
+		callerEnv   map[string]string
+		wantKey     bool   // expect CLAUDECODE to be present in resolvedEnv
+		wantValue   string // expected value if present
+	}{
+		{
+			name:        "neither map has CLAUDECODE — sets empty",
+			resolvedEnv: map[string]string{"GT_ROLE": "polecat"},
+			callerEnv:   map[string]string{"GT_ROLE": "polecat"},
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "caller provides CLAUDECODE — preserved",
+			resolvedEnv: map[string]string{"CLAUDECODE": "1"},
+			callerEnv:   map[string]string{"CLAUDECODE": "1"},
+			wantKey:     true,
+			wantValue:   "1",
+		},
+		{
+			name:        "inherited CLAUDECODE not in callerEnv — cleared",
+			resolvedEnv: map[string]string{"CLAUDECODE": "1"},
+			callerEnv:   map[string]string{},
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "empty maps — sets empty",
+			resolvedEnv: map[string]string{},
+			callerEnv:   map[string]string{},
+			wantKey:     true,
+			wantValue:   "",
+		},
+		{
+			name:        "same map without CLAUDECODE — sets empty (lifecycle.go pattern)",
+			resolvedEnv: map[string]string{"GT_ROLE": "polecat", "GT_RIG": "myrig"},
+			callerEnv:   nil, // will be set to same map below
+			wantKey:     true,
+			wantValue:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callerEnv := tt.callerEnv
+			if callerEnv == nil {
+				callerEnv = tt.resolvedEnv
+			}
+			SanitizeAgentEnv(tt.resolvedEnv, callerEnv)
+			val, ok := tt.resolvedEnv["CLAUDECODE"]
+			if ok != tt.wantKey {
+				t.Errorf("CLAUDECODE present=%v, want %v", ok, tt.wantKey)
+			}
+			if ok && val != tt.wantValue {
+				t.Errorf("CLAUDECODE=%q, want %q", val, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestAgentEnv_IncludesNodeOptionsClearing(t *testing.T) {
+	t.Parallel()
+	// Verify AgentEnv always includes NODE_OPTIONS="" regardless of role.
+	// This protects tmux SetEnvironment and EnvForExecCommand paths.
+	roles := []struct {
+		role      string
+		rig       string
+		agentName string
+	}{
+		{"mayor", "", ""},
+		{"deacon", "", ""},
+		{"boot", "", ""},
+		{"witness", "myrig", ""},
+		{"refinery", "myrig", ""},
+		{"polecat", "myrig", "Toast"},
+		{"crew", "myrig", "emma"},
+	}
+	for _, r := range roles {
+		t.Run(r.role, func(t *testing.T) {
+			env := AgentEnv(AgentEnvConfig{
+				Role:      r.role,
+				Rig:       r.rig,
+				AgentName: r.agentName,
+				TownRoot:  "/town",
+			})
+			assertEnv(t, env, "NODE_OPTIONS", "")
+		})
+	}
+}
+
+func TestAgentEnv_IncludesClaudeCodeClearing(t *testing.T) {
+	t.Parallel()
+	// Verify AgentEnv always includes CLAUDECODE="" regardless of role.
+	// This prevents nested session detection when gt sling is invoked
+	// from within a Claude Code session (issue #1666).
+	roles := []struct {
+		role      string
+		rig       string
+		agentName string
+	}{
+		{"mayor", "", ""},
+		{"deacon", "", ""},
+		{"boot", "", ""},
+		{"witness", "myrig", ""},
+		{"refinery", "myrig", ""},
+		{"polecat", "myrig", "Toast"},
+		{"crew", "myrig", "emma"},
+	}
+	for _, r := range roles {
+		t.Run(r.role, func(t *testing.T) {
+			env := AgentEnv(AgentEnvConfig{
+				Role:      r.role,
+				Rig:       r.rig,
+				AgentName: r.agentName,
+				TownRoot:  "/town",
+			})
+			assertEnv(t, env, "CLAUDECODE", "")
+		})
+	}
+}
+
+func TestBuildStartupCommandWithEnv_IncludesNodeOptions(t *testing.T) {
+	t.Parallel()
+	// Integration test: verify BuildStartupCommandWithEnv output includes NODE_OPTIONS=
+	// when the env map has it set to empty (as AgentEnv produces).
+	env := map[string]string{
+		"GT_ROLE":      "polecat",
+		"NODE_OPTIONS": "",
+	}
+	result := BuildStartupCommandWithEnv(env, "claude", "")
+	expected := "export GT_ROLE=polecat NODE_OPTIONS= && claude"
+	if result != expected {
+		t.Errorf("BuildStartupCommandWithEnv() = %q, want %q", result, expected)
 	}
 }

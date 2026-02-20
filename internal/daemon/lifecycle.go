@@ -325,12 +325,14 @@ func (d *Daemon) identityToSession(identity string) string {
 		return session.MayorSessionName()
 	case "deacon":
 		return session.DeaconSessionName()
-	case "witness", "refinery":
-		return fmt.Sprintf("gt-%s-%s", parsed.RigName, parsed.RoleType)
+	case "witness":
+		return session.WitnessSessionName(session.PrefixFor(parsed.RigName))
+	case "refinery":
+		return session.RefinerySessionName(session.PrefixFor(parsed.RigName))
 	case "crew":
-		return fmt.Sprintf("gt-%s-crew-%s", parsed.RigName, parsed.AgentName)
+		return session.CrewSessionName(session.PrefixFor(parsed.RigName), parsed.AgentName)
 	case "polecat":
-		return fmt.Sprintf("gt-%s-%s", parsed.RigName, parsed.AgentName)
+		return session.PolecatSessionName(session.PrefixFor(parsed.RigName), parsed.AgentName)
 	default:
 		return ""
 	}
@@ -466,25 +468,25 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 	// Use role-based agent resolution for per-role model selection
 	runtimeConfig := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
 
-	// Build recipient for beacon
-	recipient := identityToBDActor(parsed.RigName + "/" + parsed.RoleType)
-	if parsed.AgentName != "" {
-		recipient = identityToBDActor(parsed.RigName + "/" + parsed.RoleType + "/" + parsed.AgentName)
-	}
-	if parsed.RoleType == "deacon" || parsed.RoleType == "mayor" {
-		recipient = parsed.RoleType
-	}
+	// Build recipient for beacon using non-path format to prevent LLMs
+	// from misinterpreting the recipient as a filesystem path.
+	recipient := session.BeaconRecipient(parsed.RoleType, parsed.AgentName, parsed.RigName)
 	prompt := session.BuildStartupPrompt(session.BeaconConfig{
 		Recipient: recipient,
 		Sender:    "daemon",
 		Topic:     "lifecycle-restart",
-	}, "Check your hook and begin work.")
+	}, "Run `gt prime --hook` and begin work.")
 
-	// Build default command using the role-resolved runtime config
-	defaultCmd := "exec " + runtimeConfig.BuildCommandWithPrompt(prompt)
+	// Build default command using the role-resolved runtime config.
+	// PrependEnv produces "export K=V ... && exec cmd" which is safe for
+	// WaitForCommand/pane_current_command detection: exec replaces the shell,
+	// so tmux sees the agent process, not a shell running exports.
+	defaultEnv := map[string]string{}
 	if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
-		defaultCmd = config.PrependEnv(defaultCmd, map[string]string{"GT_SESSION_ID_ENV": runtimeConfig.Session.SessionIDEnv})
+		defaultEnv["GT_SESSION_ID_ENV"] = runtimeConfig.Session.SessionIDEnv
 	}
+	config.SanitizeAgentEnv(defaultEnv, map[string]string{})
+	defaultCmd := config.PrependEnv("exec "+runtimeConfig.BuildCommandWithPrompt(prompt), defaultEnv)
 
 	// Polecats and crew need environment variables set in the command
 	if parsed.RoleType == "polecat" {
@@ -499,6 +501,7 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 			TownRoot:     d.config.TownRoot,
 			SessionIDEnv: sessionIDEnv,
 		})
+		config.SanitizeAgentEnv(envVars, map[string]string{})
 		return config.PrependEnv("exec "+runtimeConfig.BuildCommandWithPrompt(prompt), envVars)
 	}
 
@@ -514,6 +517,7 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 			TownRoot:     d.config.TownRoot,
 			SessionIDEnv: sessionIDEnv,
 		})
+		config.SanitizeAgentEnv(envVars, map[string]string{})
 		return config.PrependEnv("exec "+runtimeConfig.BuildCommandWithPrompt(prompt), envVars)
 	}
 
@@ -752,12 +756,13 @@ func (d *Daemon) getAgentBeadInfo(agentBeadID string) (*AgentBeadInfo, error) {
 
 	// bd show --json returns an array with one element
 	var issues []struct {
-		ID          string `json:"id"`
-		Type        string `json:"issue_type"`
-		Description string `json:"description"`
-		UpdatedAt   string `json:"updated_at"`
-		HookBead    string `json:"hook_bead"`   // Read from database column
-		AgentState  string `json:"agent_state"` // Read from database column
+		ID          string   `json:"id"`
+		Type        string   `json:"issue_type"`
+		Labels      []string `json:"labels"`
+		Description string   `json:"description"`
+		UpdatedAt   string   `json:"updated_at"`
+		HookBead    string   `json:"hook_bead"`   // Read from database column
+		AgentState  string   `json:"agent_state"` // Read from database column
 	}
 
 	if err := json.Unmarshal(output, &issues); err != nil {
@@ -769,7 +774,15 @@ func (d *Daemon) getAgentBeadInfo(agentBeadID string) (*AgentBeadInfo, error) {
 	}
 
 	issue := issues[0]
-	if issue.Type != "agent" {
+	// Check for agent type via gt:agent label (preferred) or legacy type field
+	isAgent := issue.Type == "agent"
+	for _, l := range issue.Labels {
+		if l == "gt:agent" {
+			isAgent = true
+			break
+		}
+	}
+	if !isAgent {
 		return nil, fmt.Errorf("bead %s is not an agent bead (type=%s)", agentBeadID, issue.Type)
 	}
 
@@ -901,7 +914,7 @@ func (d *Daemon) checkGUPPViolations() {
 func (d *Daemon) checkRigGUPPViolations(rigName string) {
 	// List polecat agent beads for this rig
 	// Pattern: <prefix>-<rig>-polecat-<name> (e.g., gt-gastown-polecat-Toast)
-	cmd := exec.Command(d.bdPath, "list", "--type=agent", "--json")
+	cmd := exec.Command(d.bdPath, "list", "--label=gt:agent", "--json")
 	cmd.Dir = d.config.TownRoot
 	cmd.Env = os.Environ() // Inherit PATH to find bd executable
 
@@ -913,7 +926,6 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 
 	var agents []struct {
 		ID          string `json:"id"`
-		Type        string `json:"issue_type"`
 		Description string `json:"description"`
 		UpdatedAt   string `json:"updated_at"`
 		HookBead    string `json:"hook_bead"` // Read from database column, not description
@@ -943,7 +955,7 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 		// Per gt-zecmc: derive running state from tmux, not agent_state
 		// Extract polecat name from agent ID (<prefix>-<rig>-polecat-<name> -> <name>)
 		polecatName := strings.TrimPrefix(agent.ID, prefix)
-		sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
+		sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
 
 		// Check if tmux session exists and agent is running
 		if d.tmux.IsAgentAlive(sessionName) {
@@ -1001,7 +1013,7 @@ func (d *Daemon) checkOrphanedWork() {
 
 // checkRigOrphanedWork checks polecats in a specific rig for orphaned work.
 func (d *Daemon) checkRigOrphanedWork(rigName string) {
-	cmd := exec.Command(d.bdPath, "list", "--type=agent", "--json")
+	cmd := exec.Command(d.bdPath, "list", "--label=gt:agent", "--json")
 	cmd.Dir = d.config.TownRoot
 	cmd.Env = os.Environ() // Inherit PATH to find bd executable
 
@@ -1037,7 +1049,7 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 
 		// Check if tmux session is alive (derive state from tmux, not bead)
 		polecatName := strings.TrimPrefix(agent.ID, prefix)
-		sessionName := fmt.Sprintf("gt-%s-%s", rigName, polecatName)
+		sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
 
 		// Session running = not orphaned (work is being processed)
 		if d.tmux.IsAgentAlive(sessionName) {

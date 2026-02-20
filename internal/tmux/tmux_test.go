@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -480,31 +481,103 @@ func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 	}
 }
 
-func TestHasChildWithNames(t *testing.T) {
-	// Test the hasChildWithNames helper function directly
+// TestGetPaneCommand_MultiPane verifies that GetPaneCommand returns pane 0's
+// command even when a split pane exists and is active. This is the core fix
+// for gs-2v7: without explicit pane 0 targeting, health checks would see the
+// split pane's shell and falsely report the agent as dead.
+func TestGetPaneCommand_MultiPane(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-multipane-" + t.Name()
+
+	_ = tm.KillSession(sessionName)
+
+	// Create session running sleep (simulates an agent process in pane 0)
+	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Verify pane 0 shows "sleep"
+	cmd, err := tm.GetPaneCommand(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneCommand before split: %v", err)
+	}
+	if cmd != "sleep" {
+		t.Fatalf("expected pane 0 command to be 'sleep', got %q", cmd)
+	}
+
+	// Capture pane 0's PID and working directory before the split
+	pidBefore, err := tm.GetPanePID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPanePID before split: %v", err)
+	}
+	wdBefore, err := tm.GetPaneWorkDir(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneWorkDir before split: %v", err)
+	}
+
+	// Split the window — creates a new pane running a shell, which becomes active
+	if _, err := tm.run("split-window", "-t", sessionName, "-d"); err != nil {
+		t.Fatalf("split-window: %v", err)
+	}
+
+	// GetPaneCommand should still return "sleep" (pane 0), not the shell
+	cmd, err = tm.GetPaneCommand(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneCommand after split: %v", err)
+	}
+	if cmd != "sleep" {
+		t.Errorf("after split, GetPaneCommand should return pane 0 command 'sleep', got %q", cmd)
+	}
+
+	// GetPanePID should return pane 0's PID, matching the pre-split value
+	pid, err := tm.GetPanePID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPanePID after split: %v", err)
+	}
+	if pid != pidBefore {
+		t.Errorf("GetPanePID changed after split: before=%s, after=%s", pidBefore, pid)
+	}
+
+	// GetPaneWorkDir should still return pane 0's working directory
+	wd, err := tm.GetPaneWorkDir(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneWorkDir after split: %v", err)
+	}
+	if wd != wdBefore {
+		t.Errorf("GetPaneWorkDir changed after split: before=%s, after=%s", wdBefore, wd)
+	}
+}
+
+func TestHasDescendantWithNames(t *testing.T) {
+	// Test the hasDescendantWithNames helper function directly
 
 	// Test with a definitely nonexistent PID
-	got := hasChildWithNames("999999999", []string{"node", "claude"})
+	got := hasDescendantWithNames("999999999", []string{"node", "claude"}, 0)
 	if got {
-		t.Error("hasChildWithNames should return false for nonexistent PID")
+		t.Error("hasDescendantWithNames should return false for nonexistent PID")
 	}
 
 	// Test with empty names slice - should always return false
-	got = hasChildWithNames("1", []string{})
+	got = hasDescendantWithNames("1", []string{}, 0)
 	if got {
-		t.Error("hasChildWithNames should return false for empty names slice")
+		t.Error("hasDescendantWithNames should return false for empty names slice")
 	}
 
 	// Test with nil names slice - should always return false
-	got = hasChildWithNames("1", nil)
+	got = hasDescendantWithNames("1", nil, 0)
 	if got {
-		t.Error("hasChildWithNames should return false for nil names slice")
+		t.Error("hasDescendantWithNames should return false for nil names slice")
 	}
 
 	// Test with PID 1 (init/launchd) - should have children but not specific agent processes
-	got = hasChildWithNames("1", []string{"node", "claude"})
+	got = hasDescendantWithNames("1", []string{"node", "claude"}, 0)
 	if got {
-		t.Logf("hasChildWithNames(\"1\", [node,claude]) = true - init has matching child?")
+		t.Logf("hasDescendantWithNames(\"1\", [node,claude]) = true - init has matching child?")
 	}
 }
 
@@ -847,12 +920,18 @@ func TestCleanupOrphanedSessions(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
+	// Local predicate matching gt-/hq- prefixes (sufficient for test fixtures;
+	// avoids circular import of session package).
+	isTestGTSession := func(s string) bool {
+		return strings.HasPrefix(s, "gt-") || strings.HasPrefix(s, "hq-")
+	}
+
 	tm := NewTmux()
 
 	// Additional safety check: Skip if production GT sessions exist.
 	sessions, _ := tm.ListSessions()
 	for _, sess := range sessions {
-		if (strings.HasPrefix(sess, "gt-") || strings.HasPrefix(sess, "hq-")) &&
+		if isTestGTSession(sess) &&
 			sess != "gt-test-cleanup-rig" && sess != "hq-test-cleanup" {
 			t.Skip("Skipping: production GT sessions exist (would be killed by CleanupOrphanedSessions)")
 		}
@@ -897,7 +976,7 @@ func TestCleanupOrphanedSessions(t *testing.T) {
 	}
 
 	// Run cleanup
-	cleaned, err := tm.CleanupOrphanedSessions()
+	cleaned, err := tm.CleanupOrphanedSessions(isTestGTSession)
 	if err != nil {
 		t.Fatalf("CleanupOrphanedSessions: %v", err)
 	}
@@ -939,18 +1018,23 @@ func TestCleanupOrphanedSessions_NoSessions(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 
+	// Local predicate matching gt-/hq- prefixes (avoids circular import).
+	isTestGTSession := func(s string) bool {
+		return strings.HasPrefix(s, "gt-") || strings.HasPrefix(s, "hq-")
+	}
+
 	tm := NewTmux()
 
 	// Additional safety check: Skip if production GT sessions exist.
 	sessions, _ := tm.ListSessions()
 	for _, sess := range sessions {
-		if strings.HasPrefix(sess, "gt-") || strings.HasPrefix(sess, "hq-") {
+		if isTestGTSession(sess) {
 			t.Skip("Skipping: GT sessions exist (CleanupOrphanedSessions would kill them)")
 		}
 	}
 
 	// Running cleanup with no orphaned GT sessions should return 0, no error
-	cleaned, err := tm.CleanupOrphanedSessions()
+	cleaned, err := tm.CleanupOrphanedSessions(isTestGTSession)
 	if err != nil {
 		t.Fatalf("CleanupOrphanedSessions: %v", err)
 	}
@@ -1282,6 +1366,105 @@ func TestFindAgentPane_MultiPaneWithNode(t *testing.T) {
 	}
 }
 
+func TestNudgeLockTimeout(t *testing.T) {
+	// Test that acquireNudgeLock returns false after timeout when lock is held.
+	session := "test-nudge-timeout-session"
+
+	// Acquire the lock
+	if !acquireNudgeLock(session, time.Second) {
+		t.Fatal("initial acquireNudgeLock should succeed")
+	}
+
+	// Try to acquire again — should timeout
+	start := time.Now()
+	got := acquireNudgeLock(session, 100*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if got {
+		t.Error("acquireNudgeLock should return false when lock is held")
+		releaseNudgeLock(session) // clean up the extra acquire
+	}
+	if elapsed < 90*time.Millisecond {
+		t.Errorf("timeout returned too fast: %v", elapsed)
+	}
+
+	// Release the lock
+	releaseNudgeLock(session)
+
+	// Now acquire should succeed again
+	if !acquireNudgeLock(session, time.Second) {
+		t.Error("acquireNudgeLock should succeed after release")
+	}
+	releaseNudgeLock(session)
+}
+
+func TestNudgeLockConcurrency(t *testing.T) {
+	// Test that concurrent nudges to the same session are serialized.
+	session := "test-nudge-concurrent-session"
+	const goroutines = 5
+
+	// Clean up any previous state for this session key
+	sessionNudgeLocks.Delete(session)
+
+	acquired := make(chan bool, goroutines)
+
+	// First goroutine holds the lock
+	if !acquireNudgeLock(session, time.Second) {
+		t.Fatal("initial acquire should succeed")
+	}
+
+	// Launch goroutines that try to acquire the lock
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			got := acquireNudgeLock(session, 200*time.Millisecond)
+			acquired <- got
+		}()
+	}
+
+	// Wait a bit, then release the lock
+	time.Sleep(50 * time.Millisecond)
+	releaseNudgeLock(session)
+
+	// At most one goroutine should succeed (it gets the lock after we release)
+	successes := 0
+	for i := 0; i < goroutines; i++ {
+		if <-acquired {
+			successes++
+			releaseNudgeLock(session)
+		}
+	}
+
+	// At least 1 should succeed (the first one to grab it after release),
+	// and the rest should timeout
+	if successes < 1 {
+		t.Error("expected at least 1 goroutine to acquire the lock after release")
+	}
+	t.Logf("%d/%d goroutines acquired the lock", successes, goroutines)
+}
+
+func TestNudgeLockDifferentSessions(t *testing.T) {
+	// Test that locks for different sessions are independent.
+	session1 := "test-nudge-session-a"
+	session2 := "test-nudge-session-b"
+
+	// Clean up any previous state
+	sessionNudgeLocks.Delete(session1)
+	sessionNudgeLocks.Delete(session2)
+
+	// Acquire lock for session1
+	if !acquireNudgeLock(session1, time.Second) {
+		t.Fatal("acquire session1 should succeed")
+	}
+	defer releaseNudgeLock(session1)
+
+	// Acquiring lock for session2 should succeed (independent)
+	if !acquireNudgeLock(session2, time.Second) {
+		t.Error("acquire session2 should succeed even when session1 is locked")
+	} else {
+		releaseNudgeLock(session2)
+	}
+}
+
 func TestFindAgentPane_NonexistentSession(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")
@@ -1291,6 +1474,56 @@ func TestFindAgentPane_NonexistentSession(t *testing.T) {
 	_, err := tm.FindAgentPane("nonexistent-session-findagent-xyz")
 	if err == nil {
 		t.Error("FindAgentPane on nonexistent session should return error")
+	}
+}
+
+func TestValidateSessionName(t *testing.T) {
+	tests := []struct {
+		name    string
+		session string
+		wantErr bool
+	}{
+		{"valid alphanumeric", "gt-gastown-crew-tom", false},
+		{"valid with underscore", "hq_deacon", false},
+		{"valid simple", "test123", false},
+		{"empty string", "", true},
+		{"contains dot", "my.session", true},
+		{"contains colon", "my:session", true},
+		{"contains space", "my session", true},
+		{"contains slash", "rig/crew/tom", true},
+		{"contains single quote", "it's", true},
+		{"contains semicolon", "a;rm -rf /", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSessionName(tc.session)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateSessionName(%q) error = %v, wantErr %v", tc.session, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewSession_RejectsInvalidName(t *testing.T) {
+	tm := NewTmux()
+	err := tm.NewSession("invalid.name", "")
+	if err == nil {
+		t.Error("NewSession should reject session name with dots")
+	}
+	if !errors.Is(err, ErrInvalidSessionName) {
+		t.Errorf("expected ErrInvalidSessionName, got %v", err)
+	}
+}
+
+func TestEnsureSessionFresh_RejectsInvalidName(t *testing.T) {
+	tm := NewTmux()
+	err := tm.EnsureSessionFresh("has:colon", "")
+	if err == nil {
+		t.Error("EnsureSessionFresh should reject session name with colons")
+	}
+	if !errors.Is(err, ErrInvalidSessionName) {
+		t.Errorf("expected ErrInvalidSessionName, got %v", err)
 	}
 }
 
@@ -1323,5 +1556,447 @@ func TestFindAgentPane_MultiPaneNoAgent(t *testing.T) {
 	}
 	if paneID != "" {
 		t.Errorf("FindAgentPane with no agent = %q, want empty", paneID)
+	}
+}
+
+func TestNewSessionWithCommandAndEnv(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-env-" + t.Name()
+
+	// Clean up any existing session
+	_ = tm.KillSession(sessionName)
+
+	env := map[string]string{
+		"GT_ROLE": "testrig/crew/testname",
+		"GT_RIG":  "testrig",
+		"GT_CREW": "testname",
+	}
+
+	// Create session with env vars and a command that prints GT_ROLE
+	cmd := `bash -c "echo GT_ROLE=$GT_ROLE; sleep 5"`
+	if err := tm.NewSessionWithCommandAndEnv(sessionName, "", cmd, env); err != nil {
+		t.Fatalf("NewSessionWithCommandAndEnv: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Verify session exists
+	has, err := tm.HasSession(sessionName)
+	if err != nil {
+		t.Fatalf("HasSession: %v", err)
+	}
+	if !has {
+		t.Fatal("expected session to exist after creation")
+	}
+
+	// Verify the env vars are set in the session environment
+	gotRole, err := tm.GetEnvironment(sessionName, "GT_ROLE")
+	if err != nil {
+		t.Fatalf("GetEnvironment GT_ROLE: %v", err)
+	}
+	if gotRole != "testrig/crew/testname" {
+		t.Errorf("GT_ROLE = %q, want %q", gotRole, "testrig/crew/testname")
+	}
+
+	gotRig, err := tm.GetEnvironment(sessionName, "GT_RIG")
+	if err != nil {
+		t.Fatalf("GetEnvironment GT_RIG: %v", err)
+	}
+	if gotRig != "testrig" {
+		t.Errorf("GT_RIG = %q, want %q", gotRig, "testrig")
+	}
+}
+
+func TestNewSessionWithCommandAndEnvEmpty(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-env-empty-" + t.Name()
+
+	// Clean up any existing session
+	_ = tm.KillSession(sessionName)
+
+	// Empty env should work like NewSessionWithCommand
+	if err := tm.NewSessionWithCommandAndEnv(sessionName, "", "sleep 5", nil); err != nil {
+		t.Fatalf("NewSessionWithCommandAndEnv with nil env: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	has, err := tm.HasSession(sessionName)
+	if err != nil {
+		t.Fatalf("HasSession: %v", err)
+	}
+	if !has {
+		t.Fatal("expected session to exist after creation with empty env")
+	}
+}
+
+func TestIsTransientSendKeysError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"not in a mode", fmt.Errorf("tmux send-keys: not in a mode"), true},
+		{"not in a mode wrapped", fmt.Errorf("nudge: %w", fmt.Errorf("tmux send-keys: not in a mode")), true},
+		{"session not found", ErrSessionNotFound, false},
+		{"no server", ErrNoServer, false},
+		{"generic error", fmt.Errorf("something else"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTransientSendKeysError(tt.err)
+			if got != tt.want {
+				t.Errorf("isTransientSendKeysError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSendKeysLiteralWithRetry_ImmediateSuccess(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-retry-ok-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+
+	// Create a session that's ready to accept input
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Should succeed immediately — no retry needed
+	err := tm.sendKeysLiteralWithRetry(sessionName, "hello", 5*time.Second)
+	if err != nil {
+		t.Errorf("sendKeysLiteralWithRetry() = %v, want nil", err)
+	}
+}
+
+func TestSendKeysLiteralWithRetry_NonTransientFails(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+
+	// Target a session that doesn't exist — should fail immediately, not retry
+	start := time.Now()
+	err := tm.sendKeysLiteralWithRetry("gt-nonexistent-session-xyz", "hello", 5*time.Second)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error for nonexistent session, got nil")
+	}
+	// Should fail fast (< 1s), not wait the full 5s timeout
+	if elapsed > 2*time.Second {
+		t.Errorf("non-transient error took %v, expected fast failure", elapsed)
+	}
+}
+
+func TestSendKeysLiteralWithRetry_NonTransientFailsFast(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	// Use a nonexistent session — tmux returns "session not found" which is
+	// non-transient, so the function should fail fast (well under the timeout).
+	start := time.Now()
+	err := tm.sendKeysLiteralWithRetry("gt-nonexistent-session-fast-fail", "hello", 5*time.Second)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error for nonexistent session, got nil")
+	}
+	// Non-transient errors should fail immediately, not wait for timeout.
+	if elapsed > 2*time.Second {
+		t.Errorf("non-transient error took %v — should have failed fast, not retried until timeout", elapsed)
+	}
+}
+
+func TestNudgeSession_WithRetry(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-nudge-retry-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+
+	// Create a ready session
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Give shell a moment to initialize
+	time.Sleep(200 * time.Millisecond)
+
+	// NudgeSession should succeed on a ready session
+	err := tm.NudgeSession(sessionName, "test message")
+	if err != nil {
+		t.Errorf("NudgeSession() = %v, want nil", err)
+	}
+}
+
+// TestMatchesPromptPrefix verifies that prompt matching handles non-breaking
+// spaces (NBSP, U+00A0) correctly. Claude Code uses NBSP after its > prompt
+// character, but the default ReadyPromptPrefix uses a regular space.
+// Regression test for https://github.com/steveyegge/gastown/issues/1387.
+func TestMatchesPromptPrefix(t *testing.T) {
+	const (
+		nbsp          = "\u00a0" // non-breaking space
+		regularPrefix = "❯ "    // default: ❯ + regular space
+	)
+
+	tests := []struct {
+		name   string
+		line   string
+		prefix string
+		want   bool
+	}{
+		// Regular space in both line and prefix (baseline)
+		{"regular space matches", "❯ ", regularPrefix, true},
+		{"regular space with trailing content", "❯ some input", regularPrefix, true},
+
+		// NBSP in line, regular space in prefix (the bug scenario)
+		{"NBSP bare prompt matches", "❯" + nbsp, regularPrefix, true},
+		{"NBSP with content matches", "❯" + nbsp + "claude --help", regularPrefix, true},
+		{"NBSP with leading whitespace", "  ❯" + nbsp, regularPrefix, true},
+
+		// NBSP in prefix (defensive: user could configure it either way)
+		{"NBSP prefix matches NBSP line", "❯" + nbsp + "hello", "❯" + nbsp, true},
+		{"NBSP prefix matches regular space line", "❯ hello", "❯" + nbsp, true},
+
+		// Empty prefix never matches
+		{"empty prefix", "❯ ", "", false},
+
+		// No prompt character at all
+		{"no prompt", "hello world", regularPrefix, false},
+		{"empty line", "", regularPrefix, false},
+		{"whitespace only", "   ", regularPrefix, false},
+
+		// Bare prompt character without any space
+		{"bare prompt no space", "❯", regularPrefix, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesPromptPrefix(tt.line, tt.prefix)
+			if got != tt.want {
+				t.Errorf("matchesPromptPrefix(%q, %q) = %v, want %v",
+					tt.line, tt.prefix, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWaitForIdle_Timeout(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+	if os.Getenv("TMUX") == "" {
+		t.Skip("not inside tmux")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("test requires unix")
+	}
+
+	tm := NewTmux()
+
+	// Create a session running a long sleep (no prompt visible)
+	sessionName := fmt.Sprintf("gt-test-idle-%d", time.Now().UnixNano())
+	if err := tm.NewSessionWithCommand(sessionName, os.TempDir(), "sleep 60"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// WaitForIdle should timeout quickly since the session is running sleep, not a prompt
+	err := tm.WaitForIdle(sessionName, 500*time.Millisecond)
+	if err == nil {
+		t.Error("WaitForIdle should have timed out for a busy session")
+	}
+	if !errors.Is(err, ErrIdleTimeout) {
+		t.Errorf("expected ErrIdleTimeout, got: %v", err)
+	}
+}
+
+func TestDefaultReadyPromptPrefix(t *testing.T) {
+	// Verify the constant is set correctly
+	if DefaultReadyPromptPrefix == "" {
+		t.Error("DefaultReadyPromptPrefix should not be empty")
+	}
+	if !strings.Contains(DefaultReadyPromptPrefix, "❯") {
+		t.Errorf("DefaultReadyPromptPrefix = %q, want to contain ❯", DefaultReadyPromptPrefix)
+	}
+}
+
+func TestGetSessionActivity(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-activity-" + t.Name()
+
+	// Clean up any existing session
+	_ = tm.KillSession(sessionName)
+
+	// Create session
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Get session activity
+	activity, err := tm.GetSessionActivity(sessionName)
+	if err != nil {
+		t.Fatalf("GetSessionActivity: %v", err)
+	}
+
+	// Activity should be recent (within last minute since we just created it)
+	if activity.IsZero() {
+		t.Error("GetSessionActivity returned zero time")
+	}
+
+	// Activity should be in the past (or very close to now)
+	now := activity // Use activity as baseline since clocks might differ
+	_ = now         // Avoid unused variable
+
+	// The activity timestamp should be reasonable (not in far future or past)
+	// Just verify it's a valid Unix timestamp (after year 2000)
+	if activity.Year() < 2000 {
+		t.Errorf("GetSessionActivity returned suspicious time: %v", activity)
+	}
+}
+
+func TestGetSessionActivity_NonexistentSession(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+
+	// GetSessionActivity on nonexistent session should error
+	_, err := tm.GetSessionActivity("nonexistent-session-xyz-12345")
+	if err == nil {
+		t.Error("GetSessionActivity on nonexistent session should return error")
+	}
+}
+
+func TestNewSessionSet(t *testing.T) {
+	// Test creating SessionSet from names
+	names := []string{"session-a", "session-b", "session-c"}
+	set := NewSessionSet(names)
+
+	if set == nil {
+		t.Fatal("NewSessionSet returned nil")
+	}
+
+	// Test Has() for existing sessions
+	for _, name := range names {
+		if !set.Has(name) {
+			t.Errorf("SessionSet.Has(%q) = false, want true", name)
+		}
+	}
+
+	// Test Has() for non-existing session
+	if set.Has("nonexistent") {
+		t.Error("SessionSet.Has(nonexistent) = true, want false")
+	}
+
+	// Test Names() returns all sessions
+	gotNames := set.Names()
+	if len(gotNames) != len(names) {
+		t.Errorf("SessionSet.Names() returned %d names, want %d", len(gotNames), len(names))
+	}
+
+	// Verify all names are present (order may differ)
+	nameSet := make(map[string]bool)
+	for _, n := range gotNames {
+		nameSet[n] = true
+	}
+	for _, n := range names {
+		if !nameSet[n] {
+			t.Errorf("SessionSet.Names() missing %q", n)
+		}
+	}
+}
+
+func TestNewSessionSet_Empty(t *testing.T) {
+	set := NewSessionSet([]string{})
+
+	if set == nil {
+		t.Fatal("NewSessionSet returned nil for empty input")
+	}
+
+	if set.Has("anything") {
+		t.Error("Empty SessionSet.Has() = true, want false")
+	}
+
+	names := set.Names()
+	if len(names) != 0 {
+		t.Errorf("Empty SessionSet.Names() returned %d names, want 0", len(names))
+	}
+}
+
+func TestNewSessionSet_Nil(t *testing.T) {
+	set := NewSessionSet(nil)
+
+	if set == nil {
+		t.Fatal("NewSessionSet returned nil for nil input")
+	}
+
+	if set.Has("anything") {
+		t.Error("Nil-input SessionSet.Has() = true, want false")
+	}
+}
+
+func TestSessionPrefixPattern_AlwaysIncludesGTAndHQ(t *testing.T) {
+	// Even without GT_ROOT, the pattern should include gt and hq as safe defaults.
+	orig := os.Getenv("GT_ROOT")
+	t.Setenv("GT_ROOT", "")
+	defer func() { os.Setenv("GT_ROOT", orig) }()
+
+	pattern := sessionPrefixPattern()
+	if !strings.Contains(pattern, "gt") {
+		t.Errorf("pattern %q missing 'gt'", pattern)
+	}
+	if !strings.Contains(pattern, "hq") {
+		t.Errorf("pattern %q missing 'hq'", pattern)
+	}
+	// Must be a valid grep -Eq anchored alternation
+	if !strings.HasPrefix(pattern, "^(") || !strings.HasSuffix(pattern, ")-") {
+		t.Errorf("pattern %q has unexpected format", pattern)
+	}
+}
+
+func TestSessionPrefixPattern_WithTownRoot(t *testing.T) {
+	// Point at the real town root if available; otherwise skip.
+	townRoot := os.Getenv("GT_ROOT")
+	if townRoot == "" {
+		t.Skip("GT_ROOT not set; skipping live rigs.json test")
+	}
+	pattern := sessionPrefixPattern()
+	// With a real rigs.json, pattern must include at least gt, hq, and
+	// whatever other rigs are registered.
+	if !strings.Contains(pattern, "gt") {
+		t.Errorf("pattern %q missing 'gt'", pattern)
+	}
+	if !strings.Contains(pattern, "hq") {
+		t.Errorf("pattern %q missing 'hq'", pattern)
+	}
+	// Verify it's a sorted alternation.
+	if !strings.HasPrefix(pattern, "^(") || !strings.HasSuffix(pattern, ")-") {
+		t.Errorf("pattern %q has unexpected format", pattern)
 	}
 }

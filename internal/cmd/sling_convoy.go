@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -31,7 +32,7 @@ func isTrackedByConvoy(beadID string) string {
 
 	// Primary: Use bd dep list to find what tracks this issue (direction=up)
 	// This is authoritative when cross-rig routing works
-	depCmd := exec.Command("bd", "--no-daemon", "dep", "list", beadID, "--direction=up", "--type=tracks", "--json")
+	depCmd := exec.Command("bd", "dep", "list", beadID, "--direction=up", "--type=tracks", "--json")
 	depCmd.Dir = townRoot
 
 	out, err := depCmd.Output()
@@ -64,7 +65,7 @@ func findConvoyByDescription(townRoot, beadID string) string {
 	townBeads := filepath.Join(townRoot, ".beads")
 
 	// Query all open convoys from HQ
-	listCmd := exec.Command("bd", "--no-daemon", "list", "--type=convoy", "--status=open", "--json")
+	listCmd := exec.Command("bd", "list", "--type=convoy", "--status=open", "--json")
 	listCmd.Dir = townBeads
 
 	out, err := listCmd.Output()
@@ -104,7 +105,7 @@ func findConvoyByDescription(townRoot, beadID string) string {
 // convoyTracksBead checks if a convoy has a tracks dependency on the given beadID.
 // Handles both raw bead IDs and external-formatted references (e.g., "external:gt-mol:gt-mol-xyz").
 func convoyTracksBead(beadsDir, convoyID, beadID string) bool {
-	depCmd := exec.Command("bd", "--no-daemon", "dep", "list", convoyID, "--direction=down", "--type=tracks", "--json")
+	depCmd := exec.Command("bd", "dep", "list", convoyID, "--direction=down", "--type=tracks", "--json")
 	depCmd.Dir = beadsDir
 
 	out, err := depCmd.Output()
@@ -136,9 +137,77 @@ func convoyTracksBead(beadsDir, convoyID, beadID string) bool {
 	return false
 }
 
+// ConvoyInfo holds convoy details for an issue's tracking convoy.
+type ConvoyInfo struct {
+	ID            string // Convoy bead ID (e.g., "hq-cv-abc")
+	Owned         bool   // true if convoy has gt:owned label
+	MergeStrategy string // "direct", "mr", "local", or "" (default = mr)
+}
+
+// IsOwnedDirect returns true if the convoy is owned with direct merge strategy.
+// This is the key check for skipping witness/refinery merge pipeline.
+func (c *ConvoyInfo) IsOwnedDirect() bool {
+	return c != nil && c.Owned && c.MergeStrategy == "direct"
+}
+
+// getConvoyInfoForIssue checks if an issue is tracked by a convoy and returns its info.
+// Returns nil if not tracked by any convoy.
+func getConvoyInfoForIssue(issueID string) *ConvoyInfo {
+	convoyID := isTrackedByConvoy(issueID)
+	if convoyID == "" {
+		return nil
+	}
+
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return nil
+	}
+	townBeads := filepath.Join(townRoot, ".beads")
+
+	// Get convoy details (labels + description) for ownership and merge strategy
+	showCmd := exec.Command("bd", "show", convoyID, "--json")
+	showCmd.Dir = townBeads
+	var stdout bytes.Buffer
+	showCmd.Stdout = &stdout
+
+	if err := showCmd.Run(); err != nil {
+		return &ConvoyInfo{ID: convoyID} // Return basic info even if details fail
+	}
+
+	var convoys []struct {
+		Labels      []string `json:"labels"`
+		Description string   `json:"description"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil || len(convoys) == 0 {
+		return &ConvoyInfo{ID: convoyID}
+	}
+
+	info := &ConvoyInfo{ID: convoyID}
+
+	// Check for gt:owned label
+	for _, label := range convoys[0].Labels {
+		if label == "gt:owned" {
+			info.Owned = true
+			break
+		}
+	}
+
+	// Parse merge strategy from description
+	info.MergeStrategy = parseConvoyMergeStrategy(convoys[0].Description)
+
+	return info
+}
+
 // createAutoConvoy creates an auto-convoy for a single issue and tracks it.
+// If owned is true, the convoy is marked with the gt:owned label for caller-managed lifecycle.
+// mergeStrategy is optional: "direct", "mr", or "local" (empty = default mr).
 // Returns the created convoy ID.
-func createAutoConvoy(beadID, beadTitle string) (string, error) {
+func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy string) (string, error) {
+	// Guard against flag-like titles propagating into convoy names (gt-e0kx5)
+	if beads.IsFlagLikeTitle(beadTitle) {
+		return "", fmt.Errorf("refusing to create convoy: bead title %q looks like a CLI flag", beadTitle)
+	}
+
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
 		return "", fmt.Errorf("finding town root: %w", err)
@@ -153,6 +222,9 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	// Create convoy with title "Work: <issue-title>"
 	convoyTitle := fmt.Sprintf("Work: %s", beadTitle)
 	description := fmt.Sprintf("Auto-created convoy tracking %s", beadID)
+	if mergeStrategy != "" {
+		description += fmt.Sprintf("\nMerge: %s", mergeStrategy)
+	}
 
 	createArgs := []string{
 		"create",
@@ -161,11 +233,14 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 		"--title=" + convoyTitle,
 		"--description=" + description,
 	}
+	if owned {
+		createArgs = append(createArgs, "--labels=gt:owned")
+	}
 	if beads.NeedsForceForID(convoyID) {
 		createArgs = append(createArgs, "--force")
 	}
 
-	createCmd := exec.Command("bd", append([]string{"--no-daemon"}, createArgs...)...)
+	createCmd := exec.Command("bd", createArgs...)
 	createCmd.Dir = townBeads
 	createCmd.Stderr = os.Stderr
 
@@ -176,14 +251,14 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	// Add tracking relation: convoy tracks the issue.
 	// Pass the raw beadID and let bd handle cross-rig resolution via routes.jsonl,
 	// matching what gt convoy create/add already do (convoy.go:368, convoy.go:464).
-	depArgs := []string{"--no-daemon", "dep", "add", convoyID, beadID, "--type=tracks"}
+	depArgs := []string{"dep", "add", convoyID, beadID, "--type=tracks"}
 	depCmd := exec.Command("bd", depArgs...)
 	depCmd.Dir = townRoot
 	depCmd.Stderr = os.Stderr
 
 	if err := depCmd.Run(); err != nil {
 		// Tracking failed — delete the orphan convoy to prevent accumulation
-		delCmd := exec.Command("bd", "--no-daemon", "close", convoyID, "-r", "tracking dep failed")
+		delCmd := exec.Command("bd", "close", convoyID, "-r", "tracking dep failed")
 		delCmd.Dir = townRoot
 		_ = delCmd.Run()
 		return "", fmt.Errorf("adding tracking relation for %s: %w", beadID, err)
@@ -191,4 +266,3 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 
 	return convoyID, nil
 }
-

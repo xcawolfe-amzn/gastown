@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"html/template"
@@ -210,6 +211,9 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// All fetches completed
 	case <-ctx.Done():
 		log.Printf("dashboard: fetch timeout after %v", h.fetchTimeout)
+		// Goroutines may still be writing to shared result variables.
+		// Wait for them to finish to avoid a data race on read below.
+		<-done
 	}
 
 	// Compute summary from already-fetched data
@@ -234,11 +238,19 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Expand:      expandPanel,
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err := h.template.ExecuteTemplate(w, "convoy.html", data); err != nil {
+	var buf bytes.Buffer
+	if err := h.template.ExecuteTemplate(&buf, "convoy.html", data); err != nil {
+		// Security: intentionally returns a generic error message to the client.
+		// Internal error details (err) are not exposed in the HTTP response to
+		// prevent information leakage. The error is logged server-side only.
+		log.Printf("dashboard: template execution failed: %v", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := buf.WriteTo(w); err != nil {
+		log.Printf("dashboard: response write failed: %v", err)
 	}
 }
 
