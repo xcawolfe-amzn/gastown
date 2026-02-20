@@ -63,10 +63,15 @@ type AgentPresetInfo struct {
 	// Used for resuming sessions across restarts.
 	SessionIDEnv string `json:"session_id_env,omitempty"`
 
-	// ResumeFlag is the flag/subcommand for resuming sessions.
+	// ResumeFlag is the flag/subcommand for resuming a specific session.
 	// For claude/gemini: "--resume"
 	// For codex: "resume" (subcommand)
 	ResumeFlag string `json:"resume_flag,omitempty"`
+
+	// ContinueFlag is the flag for auto-resuming the most recent session.
+	// For claude: "--continue" (--resume without args opens interactive picker)
+	// If empty, --resume without a session ID is rejected with a clear error.
+	ContinueFlag string `json:"continue_flag,omitempty"`
 
 	// ResumeStyle indicates how to invoke resume:
 	// "flag" - pass as --resume <id> argument
@@ -77,11 +82,53 @@ type AgentPresetInfo struct {
 	SupportsHooks bool `json:"supports_hooks,omitempty"`
 
 	// SupportsForkSession indicates if --fork-session is available.
-	// Claude-only feature for seance command.
+	// Used by the seance command for session forking.
 	SupportsForkSession bool `json:"supports_fork_session,omitempty"`
 
 	// NonInteractive contains settings for non-interactive mode.
 	NonInteractive *NonInteractiveConfig `json:"non_interactive,omitempty"`
+
+	// --- Runtime default fields (replaces scattered default*() switch statements) ---
+
+	// PromptMode controls how the initial prompt is delivered: "arg" or "none".
+	// Defaults to "arg" if empty.
+	PromptMode string `json:"prompt_mode,omitempty"`
+
+	// ConfigDirEnv is the env var for the agent's config directory (e.g., "CLAUDE_CONFIG_DIR").
+	ConfigDirEnv string `json:"config_dir_env,omitempty"`
+
+	// ConfigDir is the top-level config directory (e.g., ".claude", ".opencode").
+	// Used for slash command provisioning. Empty means no command provisioning.
+	ConfigDir string `json:"config_dir,omitempty"`
+
+	// HooksProvider is the hooks framework provider type (e.g., "claude", "opencode").
+	// Empty or "none" means no hooks support.
+	HooksProvider string `json:"hooks_provider,omitempty"`
+
+	// HooksDir is the directory for hooks/settings (e.g., ".claude", ".opencode/plugins").
+	HooksDir string `json:"hooks_dir,omitempty"`
+
+	// HooksSettingsFile is the settings/plugin filename (e.g., "settings.json", "gastown.js").
+	HooksSettingsFile string `json:"hooks_settings_file,omitempty"`
+
+	// HooksInformational indicates hooks are instructions-only (not executable lifecycle hooks).
+	// For these providers, Gas Town sends startup fallback commands via nudge.
+	HooksInformational bool `json:"hooks_informational,omitempty"`
+
+	// ReadyPromptPrefix is the prompt prefix for tmux readiness detection (e.g., "❯ ").
+	// Empty means delay-based detection only.
+	ReadyPromptPrefix string `json:"ready_prompt_prefix,omitempty"`
+
+	// ReadyDelayMs is the delay-based readiness fallback in milliseconds.
+	ReadyDelayMs int `json:"ready_delay_ms,omitempty"`
+
+	// InstructionsFile is the instructions file for this agent (e.g., "CLAUDE.md", "AGENTS.md").
+	// Defaults to "AGENTS.md" if empty.
+	InstructionsFile string `json:"instructions_file,omitempty"`
+
+	// EmitsPermissionWarning indicates the agent shows a bypass-permissions warning on startup
+	// that needs to be acknowledged via tmux.
+	EmitsPermissionWarning bool `json:"emits_permission_warning,omitempty"`
 }
 
 // NonInteractiveConfig contains settings for running agents non-interactively.
@@ -118,10 +165,22 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ProcessNames:        []string{"node", "claude"}, // Claude runs as Node.js
 		SessionIDEnv:        "CLAUDE_SESSION_ID",
 		ResumeFlag:          "--resume",
+		ContinueFlag:        "--continue",
 		ResumeStyle:         "flag",
 		SupportsHooks:       true,
 		SupportsForkSession: true,
 		NonInteractive:      nil, // Claude is native non-interactive
+		// Runtime defaults
+		PromptMode:             "arg",
+		ConfigDirEnv:           "CLAUDE_CONFIG_DIR",
+		ConfigDir:              ".claude",
+		HooksProvider:          "claude",
+		HooksDir:               ".claude",
+		HooksSettingsFile:      "settings.json",
+		ReadyPromptPrefix:      "❯ ",
+		ReadyDelayMs:           10000,
+		InstructionsFile:       "CLAUDE.md",
+		EmitsPermissionWarning: true,
 	},
 	AgentGemini: {
 		Name:                AgentGemini,
@@ -137,13 +196,21 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			PromptFlag: "-p",
 			OutputFlag: "--output-format json",
 		},
+		// Runtime defaults
+		PromptMode:        "arg",
+		ConfigDir:         ".gemini",
+		HooksProvider:     "gemini",
+		HooksDir:          ".gemini",
+		HooksSettingsFile: "settings.json",
+		ReadyDelayMs:      5000,
+		InstructionsFile:  "AGENTS.md",
 	},
 	AgentCodex: {
 		Name:                AgentCodex,
 		Command:             "codex",
-		Args:                []string{"--yolo"},
+		Args:                []string{"--dangerously-bypass-approvals-and-sandbox"},
 		ProcessNames:        []string{"codex"}, // Codex CLI binary
-		SessionIDEnv:        "", // Codex captures from JSONL output
+		SessionIDEnv:        "",                 // Codex captures from JSONL output
 		ResumeFlag:          "resume",
 		ResumeStyle:         "subcommand",
 		SupportsHooks:       false, // Use env/files instead
@@ -152,6 +219,10 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			Subcommand: "exec",
 			OutputFlag: "--json",
 		},
+		// Runtime defaults
+		PromptMode:       "none",
+		ReadyDelayMs:     3000,
+		InstructionsFile: "AGENTS.md",
 	},
 	AgentCursor: {
 		Name:                AgentCursor,
@@ -167,6 +238,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			PromptFlag: "-p",
 			OutputFlag: "--output-format json",
 		},
+		// Runtime defaults
+		PromptMode:       "arg",
+		InstructionsFile: "AGENTS.md",
 	},
 	AgentAuggie: {
 		Name:                AgentAuggie,
@@ -178,6 +252,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ResumeStyle:         "flag",
 		SupportsHooks:       false,
 		SupportsForkSession: false,
+		// Runtime defaults
+		PromptMode:       "arg",
+		InstructionsFile: "AGENTS.md",
 	},
 	AgentAmp: {
 		Name:                AgentAmp,
@@ -189,6 +266,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ResumeStyle:         "subcommand", // 'amp threads continue <threadId>'
 		SupportsHooks:       false,
 		SupportsForkSession: false,
+		// Runtime defaults
+		PromptMode:       "arg",
+		InstructionsFile: "AGENTS.md",
 	},
 	AgentOpenCode: {
 		Name:    AgentOpenCode,
@@ -199,15 +279,23 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			"OPENCODE_PERMISSION": `{"*":"allow"}`,
 		},
 		ProcessNames:        []string{"opencode", "node", "bun"}, // Runs as Node.js or Bun
-		SessionIDEnv:        "",                           // OpenCode manages sessions internally
-		ResumeFlag:          "",                           // No resume support yet
+		SessionIDEnv:        "",                                   // OpenCode manages sessions internally
+		ResumeFlag:          "",                                   // No resume support yet
 		ResumeStyle:         "",
-		SupportsHooks:       true,  // Uses .opencode/plugin/gastown.js
+		SupportsHooks:       true, // Uses .opencode/plugins/gastown.js
 		SupportsForkSession: false,
 		NonInteractive: &NonInteractiveConfig{
 			Subcommand: "run",
 			OutputFlag: "--format json",
 		},
+		// Runtime defaults
+		PromptMode:        "arg",
+		ConfigDir:         ".opencode",
+		HooksProvider:     "opencode",
+		HooksDir:          ".opencode/plugins",
+		HooksSettingsFile: "gastown.js",
+		ReadyDelayMs:      8000,
+		InstructionsFile:  "AGENTS.md",
 	},
 	AgentCopilot: {
 		Name:                AgentCopilot,
@@ -265,6 +353,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			PromptFlag: "-p",
 			OutputFlag: "--output json",
 		},
+		// Runtime defaults
+		PromptMode:       "arg",
+		InstructionsFile: "AGENTS.md",
 	},
 }
 
@@ -497,6 +588,55 @@ func GetProcessNames(agentName string) []string {
 		return []string{"node", "claude"}
 	}
 	return info.ProcessNames
+}
+
+// ResolveProcessNames determines the correct process names for liveness detection
+// given an agent name and the actual command binary. This handles custom agents
+// that shadow built-in preset names (e.g., a custom "codex" agent that runs
+// "opencode" instead of the built-in "codex" binary).
+//
+// Resolution order:
+//  1. If agentName matches a built-in preset AND the preset's Command matches
+//     the actual command → use the preset's ProcessNames (no mismatch).
+//  2. Otherwise, find a built-in preset whose Command matches the actual command
+//     and use its ProcessNames (custom agent using a known launcher).
+//  3. Fallback: [command] (fully custom binary).
+func ResolveProcessNames(agentName, command string) []string {
+	ensureRegistry()
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	// Normalize command to basename for comparison. Commands may be
+	// path-resolved (e.g., "/home/user/.claude/local/claude" from
+	// resolveClaudePath), but built-in presets store bare names ("claude").
+	// Process matching (processMatchesNames, pgrep) also uses basenames.
+	cmdBase := command
+	if command != "" {
+		cmdBase = filepath.Base(command)
+	}
+
+	// Check if agentName matches a built-in/registered preset with matching command.
+	// Compare against both the raw command and basename to handle registry entries
+	// that store absolute-path commands (e.g., "/opt/bin/my-tool").
+	if info, ok := globalRegistry.Agents[agentName]; ok && len(info.ProcessNames) > 0 {
+		if info.Command == command || info.Command == cmdBase || filepath.Base(info.Command) == cmdBase || cmdBase == "" {
+			return info.ProcessNames
+		}
+	}
+
+	// Agent name doesn't match or command differs — look up by command
+	if cmdBase != "" {
+		for _, info := range globalRegistry.Agents {
+			if (info.Command == command || filepath.Base(info.Command) == cmdBase) && len(info.ProcessNames) > 0 {
+				return info.ProcessNames
+			}
+		}
+		// Unknown command — use the binary basename itself
+		return []string{cmdBase}
+	}
+
+	// No command provided, agent not in registry — Claude defaults
+	return []string{"node", "claude"}
 }
 
 // MergeWithPreset applies preset defaults to a RuntimeConfig.
