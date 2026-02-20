@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/xcawolfe-amzn/gastown/internal/hooks"
 )
 
 // HooksSyncCheck verifies all settings.json files match what gt hooks sync would generate.

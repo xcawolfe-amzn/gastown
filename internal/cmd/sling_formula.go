@@ -3,17 +3,17 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/xcawolfe-amzn/gastown/internal/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/events"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 type wispCreateJSON struct {
@@ -170,7 +170,7 @@ func runSlingFormula(args []string) error {
 	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
 	// Step 3: Hook the wisp bead with retry and verification.
-	// See: https://github.com/steveyegge/gastown/issues/148
+	// See: https://github.com/xcawolfe-amzn/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
 	if err := hookBeadWithRetry(wispRootID, targetAgent, hookDir); err != nil {
 		return err

@@ -3,11 +3,11 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // checkRigNotParkedOrDocked checks if a rig is parked or docked and returns

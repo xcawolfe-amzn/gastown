@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/events"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
 )
 
 // OrphanSessionCheck detects orphaned tmux sessions that don't match

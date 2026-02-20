@@ -3,12 +3,12 @@ package cmd
 import (
 	"bytes"
 	"fmt"
-	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/xcawolfe-amzn/gastown/internal/cli"
 	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

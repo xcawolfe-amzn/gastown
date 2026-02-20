@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/crew"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/crew"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 func runCrewAdd(cmd *cobra.Command, args []string) error {

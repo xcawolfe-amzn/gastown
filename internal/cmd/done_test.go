@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
 )
 
 // TestDoneUsesResolveBeadsDir verifies that the done command correctly uses

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 func setupPolecatTestRegistry(t *testing.T) {

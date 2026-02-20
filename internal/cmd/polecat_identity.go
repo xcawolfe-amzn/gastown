@@ -13,11 +13,11 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/polecat"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
 )
 
 // Polecat identity command flags

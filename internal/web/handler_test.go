@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/activity"
+	"github.com/xcawolfe-amzn/gastown/internal/activity"
 )
 
 // Test error for simulating fetch failures

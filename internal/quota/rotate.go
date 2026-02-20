@@ -3,7 +3,7 @@ package quota
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
 )
 
 // RotateResult holds the result of rotating a single session.

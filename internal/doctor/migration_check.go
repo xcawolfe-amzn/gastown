@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/xcawolfe-amzn/gastown/internal/doltserver"
+	"github.com/xcawolfe-amzn/gastown/internal/util"
 )
 
 // DoltMetadataCheck verifies that all rig .beads/metadata.json files have

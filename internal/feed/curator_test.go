@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/events"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/events"
 )
 
 func TestCurator_FiltersByVisibility(t *testing.T) {

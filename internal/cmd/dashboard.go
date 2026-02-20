@@ -11,9 +11,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/web"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/web"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 var (

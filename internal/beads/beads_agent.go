@@ -11,7 +11,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 )
 
 // lockAgentBead acquires an exclusive file lock for a specific agent bead ID.

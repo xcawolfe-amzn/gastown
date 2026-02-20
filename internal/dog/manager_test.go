@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
 )
 
 // TestDogStateJSON verifies DogState JSON serialization.

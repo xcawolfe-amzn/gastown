@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
 )
 
 // sessionNudgeLocks serializes nudges to the same session.
@@ -64,7 +64,7 @@ func NewTmux() *Tmux {
 
 // run executes a tmux command and returns stdout.
 // All commands include -u flag for UTF-8 support regardless of locale settings.
-// See: https://github.com/steveyegge/gastown/issues/1219
+// See: https://github.com/xcawolfe-amzn/gastown/issues/1219
 func (t *Tmux) run(args ...string) (string, error) {
 	// Prepend -u flag for UTF-8 mode (PATCH-004)
 	allArgs := append([]string{"-u"}, args...)
@@ -1640,7 +1640,7 @@ func (t *Tmux) WaitForShellReady(session string, timeout time.Duration) error {
 // configured ready-prompt prefix. It normalizes non-breaking spaces
 // (U+00A0) to regular spaces before matching, because Claude Code uses
 // NBSP after its ❯ prompt character while the default ReadyPromptPrefix
-// uses a regular space. See https://github.com/steveyegge/gastown/issues/1387.
+// uses a regular space. See https://github.com/xcawolfe-amzn/gastown/issues/1387.
 func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 	if readyPromptPrefix == "" {
 		return false
@@ -2017,7 +2017,7 @@ func sessionPrefixPattern() string {
 // Gas Town sessions (those matching a registered rig prefix or "hq-").
 // For non-GT sessions, the default tmux behavior (next-window/previous-window)
 // is preserved.
-// See: https://github.com/steveyegge/gastown/issues/13
+// See: https://github.com/xcawolfe-amzn/gastown/issues/13
 //
 // IMPORTANT: We pass #{session_name} to the command because run-shell doesn't
 // reliably preserve the session context. tmux expands #{session_name} at binding
@@ -2049,7 +2049,7 @@ func (t *Tmux) SetCycleBindings(session string) error {
 // IMPORTANT: This binding is conditional - it only runs for Gas Town sessions
 // (those matching a registered rig prefix or "hq-"). For non-GT sessions, a
 // help message is shown.
-// See: https://github.com/steveyegge/gastown/issues/13
+// See: https://github.com/xcawolfe-amzn/gastown/issues/13
 func (t *Tmux) SetFeedBinding(session string) error {
 	ifShell := fmt.Sprintf("echo '#{session_name}' | grep -Eq '%s'", sessionPrefixPattern())
 	_, err := t.run("bind-key", "-T", "prefix", "a",

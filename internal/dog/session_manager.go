@@ -2,16 +2,16 @@
 package dog
 
 import (
-	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/xcawolfe-amzn/gastown/internal/cli"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
 )
 
 // Session errors

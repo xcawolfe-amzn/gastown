@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/util"
 )
 
 // TmuxExecutor is the interface for tmux mutation operations needed by the Rotator.

@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/runtime"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
 )
 
 // Common errors

@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/runtime"
 )
 
 // timeNow is a function that returns the current time. It can be overridden in tests.

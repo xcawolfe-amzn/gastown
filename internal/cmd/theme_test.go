@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
 )
 
 // setupTestTownForTheme creates a minimal Gas Town workspace for theme tests.

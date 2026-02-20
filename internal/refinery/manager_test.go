@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 func setupTestRegistry(t *testing.T) {

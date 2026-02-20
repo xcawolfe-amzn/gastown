@@ -45,9 +45,9 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/util"
 )
 
 // EnsureDoltIdentity configures dolt global identity (user.name, user.email)

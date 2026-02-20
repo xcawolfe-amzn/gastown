@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 // installMockBd places a fake bd binary in PATH that handles the commands

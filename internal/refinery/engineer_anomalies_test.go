@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
 )
 
 func TestDetectQueueAnomalies_StaleClaimSeverity(t *testing.T) {

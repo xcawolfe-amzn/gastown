@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
 )
 
 func TestGetFormulaNames(t *testing.T) {

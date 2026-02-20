@@ -12,21 +12,21 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/crew"
-	"github.com/steveyegge/gastown/internal/deps"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/hooks"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/refinery"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/wisp"
-	"github.com/steveyegge/gastown/internal/witness"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/crew"
+	"github.com/xcawolfe-amzn/gastown/internal/deps"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/hooks"
+	"github.com/xcawolfe-amzn/gastown/internal/polecat"
+	"github.com/xcawolfe-amzn/gastown/internal/refinery"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/wisp"
+	"github.com/xcawolfe-amzn/gastown/internal/witness"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -72,7 +72,7 @@ Use --adopt to register an existing directory instead of creating new:
   - Adds entry to mayor/rigs.json
 
 Example:
-  gt rig add gastown https://github.com/steveyegge/gastown
+  gt rig add gastown https://github.com/xcawolfe-amzn/gastown
   gt rig add my-project git@github.com:user/repo.git --prefix mp
   gt rig add existing-rig --adopt`,
 	Args: cobra.RangeArgs(1, 2),

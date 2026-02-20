@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
 )
 
 type trackedStatus struct {

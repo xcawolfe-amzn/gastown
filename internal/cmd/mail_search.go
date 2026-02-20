@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/mail"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 )
 
 // runMailSearch searches for messages matching a pattern.

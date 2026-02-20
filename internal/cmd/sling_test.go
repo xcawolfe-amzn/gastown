@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"bytes"
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
 	"os"
 	"path/filepath"
 	"runtime"

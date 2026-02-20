@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
 )
 
 // StaleAgentBeadsCheck detects agent beads that exist in the database but have

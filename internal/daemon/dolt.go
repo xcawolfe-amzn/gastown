@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/doltserver"
+	"github.com/xcawolfe-amzn/gastown/internal/doltserver"
 )
 
 const doltCmdTimeout = 15 * time.Second

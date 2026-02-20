@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/cli"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/nudge"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/cli"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/nudge"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // resolveBeadDir returns the directory to run bd commands for a given bead ID.
@@ -711,7 +711,7 @@ func isHookedAgentDead(assignee string) bool {
 // hookBeadWithRetry hooks a bead to a target agent with exponential backoff retry
 // and post-hook verification. This ensures the hook sticks even under Dolt concurrency.
 // Fails fast on configuration/initialization errors (gt-2ra).
-// See: https://github.com/steveyegge/gastown/issues/148
+// See: https://github.com/xcawolfe-amzn/gastown/issues/148
 func hookBeadWithRetry(beadID, targetAgent, hookDir string) error {
 	const maxRetries = 10
 	const baseBackoff = 500 * time.Millisecond

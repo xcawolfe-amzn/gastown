@@ -1,21 +1,21 @@
 package cmd
 
 import (
-	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/xcawolfe-amzn/gastown/internal/cli"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/checkpoint"
-	"github.com/steveyegge/gastown/internal/deacon"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/templates"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/checkpoint"
+	"github.com/xcawolfe-amzn/gastown/internal/deacon"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/templates"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // outputPrimeContext outputs the role-specific context using templates or fallback.

@@ -42,7 +42,7 @@ func buildGTWithLdflags(t *testing.T, outputDir string) string {
 	}
 	binaryPath := filepath.Join(outputDir, binaryName)
 
-	ldflags := "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1"
+	ldflags := "-X github.com/xcawolfe-amzn/gastown/internal/cmd.BuiltProperly=1"
 	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", binaryPath, "./cmd/gt")
 	cmd.Dir = projectRoot
 	output, err := cmd.CombinedOutput()

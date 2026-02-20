@@ -11,15 +11,15 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/runtime"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/util"
 )
 
 // Common errors
@@ -642,7 +642,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	// Compute environment variables BEFORE creating the session.
 	// These are passed via tmux -e flags so the initial shell inherits the correct
 	// env from the start, preventing parent env (e.g., GT_ROLE=mayor) from leaking
-	// into crew sessions. See: https://github.com/steveyegge/gastown/issues/1289
+	// into crew sessions. See: https://github.com/xcawolfe-amzn/gastown/issues/1289
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:             "crew",
 		Rig:              m.rig.Name,
@@ -747,7 +747,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	// The -e flags set session-level env BEFORE the shell starts, ensuring the
 	// initial shell inherits the correct GT_ROLE (not the parent's).
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
-	// See: https://github.com/steveyegge/gastown/issues/1289 (env inheritance fix)
+	// See: https://github.com/xcawolfe-amzn/gastown/issues/1289 (env inheritance fix)
 	if err := t.NewSessionWithCommandAndEnv(sessionID, worker.ClonePath, claudeCmd, envVars); err != nil {
 		return fmt.Errorf("creating session: %w", err)
 	}

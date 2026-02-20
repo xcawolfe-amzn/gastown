@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
-	sessionpkg "github.com/steveyegge/gastown/internal/session"
+	sessionpkg "github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 // cycleSession is the --session flag for cycle next/prev commands.

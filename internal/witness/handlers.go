@@ -9,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/convoy"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/nudge"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/util"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/convoy"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/mail"
+	"github.com/xcawolfe-amzn/gastown/internal/nudge"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/util"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // initRegistryFromWorkDir initializes the session prefix registry from a work
@@ -1611,7 +1611,7 @@ type DetectOrphanedMoleculesResult struct {
 // by scanning FROM beads. Once a polecat is nuked and its directory removed,
 // DetectZombiePolecats can't see it — but the orphaned molecules remain.
 //
-// See: https://github.com/steveyegge/gastown/issues/1381
+// See: https://github.com/xcawolfe-amzn/gastown/issues/1381
 func DetectOrphanedMolecules(workDir, rigName string, router *mail.Router) *DetectOrphanedMoleculesResult {
 	result := &DetectOrphanedMoleculesResult{}
 

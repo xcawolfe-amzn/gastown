@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 func setupCostsTestRegistry(t *testing.T) {

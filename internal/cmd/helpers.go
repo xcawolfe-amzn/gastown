@@ -8,11 +8,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 )
 
 // inferRigFromCwd tries to determine the rig from the current directory.
@@ -78,7 +78,7 @@ func isInTmuxSession(targetSession string) bool {
 // If already inside tmux, uses switch-client instead of attach-session.
 // Uses syscall.Exec to replace the Go process with tmux for direct terminal
 // control, and passes -u for UTF-8 support regardless of locale settings.
-// See: https://github.com/steveyegge/gastown/issues/1219
+// See: https://github.com/xcawolfe-amzn/gastown/issues/1219
 func attachToTmuxSession(sessionID string) error {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {

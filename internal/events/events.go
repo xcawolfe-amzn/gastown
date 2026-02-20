@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // Event represents an activity event in Gas Town.

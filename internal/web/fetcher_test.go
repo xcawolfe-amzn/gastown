@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/activity"
+	"github.com/xcawolfe-amzn/gastown/internal/activity"
 )
 
 func TestCalculateWorkStatus(t *testing.T) {

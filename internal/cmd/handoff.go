@@ -9,15 +9,15 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/events"
+	"github.com/xcawolfe-amzn/gastown/internal/git"
+	"github.com/xcawolfe-amzn/gastown/internal/mail"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/tmux"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 var handoffCmd = &cobra.Command{
@@ -281,7 +281,7 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	// That would kill the gt handoff process itself before it can call RespawnPane,
 	// leaving the pane dead with no respawn. RespawnPane's -k flag handles killing
 	// atomically - tmux kills the old process and spawns the new one together.
-	// See: https://github.com/steveyegge/gastown/issues/859 (pane is dead bug)
+	// See: https://github.com/xcawolfe-amzn/gastown/issues/859 (pane is dead bug)
 	//
 	// For orphan prevention, we rely on respawn-pane -k which sends SIGHUP/SIGTERM.
 	// If orphans still occur, the solution is to adjust the restart command to

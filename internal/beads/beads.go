@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/xcawolfe-amzn/gastown/internal/runtime"
 )
 
 // Common errors

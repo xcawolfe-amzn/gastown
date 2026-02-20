@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/activity"
+	"github.com/xcawolfe-amzn/gastown/internal/activity"
 )
 
 //go:embed templates/*.html

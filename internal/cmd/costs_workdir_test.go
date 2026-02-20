@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 // filterGTEnv removes GT_* and BD_* environment variables to isolate test subprocess.

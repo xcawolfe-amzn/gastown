@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/xcawolfe-amzn/gastown/internal/session"
 )
 
 // cyclePolecatSession switches to the next or previous polecat session in the same rig.

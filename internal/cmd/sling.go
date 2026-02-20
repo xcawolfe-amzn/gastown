@@ -9,12 +9,12 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/xcawolfe-amzn/gastown/internal/beads"
+	"github.com/xcawolfe-amzn/gastown/internal/doltserver"
+	"github.com/xcawolfe-amzn/gastown/internal/events"
+	"github.com/xcawolfe-amzn/gastown/internal/mail"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/workspace"
 )
 
 var slingCmd = &cobra.Command{
@@ -598,7 +598,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Hook the bead with retry and verification.
-	// See: https://github.com/steveyegge/gastown/issues/148
+	// See: https://github.com/xcawolfe-amzn/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 	if err := hookBeadWithRetry(beadID, targetAgent, hookDir); err != nil {
 		return err

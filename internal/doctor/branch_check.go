@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/xcawolfe-amzn/gastown/internal/rig"
 )
 
 // BranchCheck detects persistent roles (crew, witness, refinery) that are

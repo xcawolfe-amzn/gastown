@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/ui"
+	"github.com/xcawolfe-amzn/gastown/internal/ui"
 )
 
 // colorizedHelpFunc wraps Cobra's default help with semantic coloring.

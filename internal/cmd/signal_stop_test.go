@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/xcawolfe-amzn/gastown/internal/mail"
 )
 
 func TestIsSelfHandoff(t *testing.T) {

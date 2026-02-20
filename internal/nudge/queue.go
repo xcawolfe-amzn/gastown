@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/xcawolfe-amzn/gastown/internal/constants"
 )
 
 // Priority levels for nudge delivery.

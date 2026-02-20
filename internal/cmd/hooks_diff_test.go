@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/xcawolfe-amzn/gastown/internal/hooks"
 )
 
 func TestDiffHooksConfigsNoChanges(t *testing.T) {

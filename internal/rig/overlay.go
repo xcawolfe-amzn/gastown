@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 )
 
 // CopyOverlay copies files from <rigPath>/.runtime/overlay/ to the destination path.

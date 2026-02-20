@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/lock"
+	"github.com/xcawolfe-amzn/gastown/internal/lock"
 )
 
 // StatusPinned is the status for pinned beads that never get closed.

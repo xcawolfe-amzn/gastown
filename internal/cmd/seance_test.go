@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/xcawolfe-amzn/gastown/internal/config"
 )
 
 // setupSeanceTestEnv creates a test environment with multiple accounts and sessions.

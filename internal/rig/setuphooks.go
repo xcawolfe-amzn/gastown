@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/xcawolfe-amzn/gastown/internal/style"
 )
 
 // RunSetupHooks executes setup hooks found in <rigPath>/.runtime/setup-hooks/.
